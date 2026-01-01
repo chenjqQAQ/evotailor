@@ -1,0 +1,29 @@
+mode: docker
+working_directory: .
+run_root: runs/production_trials
+# evotailor must be mounted at the same absolute path inside the shared
+# container so the injected sitecustomize module and FPM artifact are visible.
+service_command: [docker, exec, -e, "EVOTAILOR_FPM_OUTPUT_PATH={fpm_output_path}", -e, "PYTHONPATH={instrumentation_path}", evotailor-shared-main, vllm, serve, /path/in/container/model, --host, 0.0.0.0, --port, "18000"]
+health_url: http://127.0.0.1:18000/health
+startup_timeout_s: 300
+workload_command: [docker, exec, evotailor-shared-main, /path/in/container/python, /path/in/container/run_task.py, --output, "{result_path}"]
+workload_timeout_s: 3600
+cleanup_command: [docker, exec, evotailor-shared-main, pkill, -f, "vllm serve"]
+objective_metric: deployment_plus_task_time_s
+telemetry:
+  collect_vllm_fpm: true
+  require_forward_pass_metrics: true
+  hardware_sample_interval_s: 2.0
+parameter_arguments:
+  deployment.tensor_parallel_size: {flag: --tensor-parallel-size}
+  deployment.pipeline_parallel_size: {flag: --pipeline-parallel-size}
+  deployment.data_parallel_size: {flag: --data-parallel-size}
+  runtime.gpu_memory_utilization: {flag: --gpu-memory-utilization}
+  runtime.max_model_len: {flag: --max-model-len}
+  runtime.max_num_seqs: {flag: --max-num-seqs}
+  runtime.max_num_batched_tokens: {flag: --max-num-batched-tokens}
+  runtime.enable_prefix_caching: {true_flag: --enable-prefix-caching, false_flag: --no-enable-prefix-caching}
+  runtime.enable_chunked_prefill: {true_flag: --enable-chunked-prefill, false_flag: --no-enable-chunked-prefill}
+  model.kv_cache_dtype: {flag: --kv-cache-dtype}
+  vllm.block_size: {flag: --block-size}
+  vllm.max_cudagraph_capture_size: {flag: --max-cudagraph-capture-size}

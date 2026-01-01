@@ -1,0 +1,27 @@
+# Frozen settings shared by every arm of the Qwen3.8-27B comparison.
+# Kept in one place so a change to any of them cannot silently apply to only one arm.
+seed: 20260927
+objective_direction: minimize
+objective_metric: deployment_plus_task_time_s
+search_space: configs/search_spaces/common_v2.json
+model: gpt-5.6-sol
+base_url: ${EVOTAILOR_V2_BASE_URL}
+api_key_env: EVOTAILOR_PROPOSER_API_KEY
+# The primary relay rate-limits under load and a rate limit used to end the Campaign.
+# The stand-in serves the same model, and once the primary fails the client stays on
+# the fallback for the rest of the run.
+fallback_base_url: https://api.agent-service.com/v1
+fallback_api_key_env: EVOTAILOR_AGENT_API_KEY
+model_timeout_s: 180
+model_retries: 5
+model_attempts_per_endpoint: 3
+model_max_backoff_s: 300
+command:
+- ${PYTHON}
+- scripts/trial_wrapper.py
+command_timeout_s: 7200
+aiconfigurator_command:
+- ${PYTHON}
+- scripts/aiconfigurator_bridge.py
+mature_optimizer_root: ${EVOTAILOR_MATURE_ROOT}/src
+console_progress: true

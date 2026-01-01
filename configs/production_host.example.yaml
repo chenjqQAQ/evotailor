@@ -1,0 +1,26 @@
+campaign_id: production_host
+run_mode: portfolio_agent
+execution_backend: host
+max_trials: 36
+episode_size: 6
+seed: 42
+objective_direction: minimize
+search_space: configs/search_spaces/common_v2.json
+run_root: runs
+enabled_proposers: [tpe, slo_guard, scoot, coverage, neighborhood]
+use_llm_selector: true
+use_outer_agent: true
+auto_promote_policy: true
+model: gpt-5.6-sol
+base_url: ${EVOTAILOR_V2_BASE_URL}
+api_key_env: EVOTAILOR_PROPOSER_API_KEY
+model_timeout_s: 120
+model_retries: 3
+command: [./.venv/bin/python, scripts/trial_wrapper.py]
+command_timeout_s: 5400
+aiconfigurator_command: [${PYTHON}, scripts/aiconfigurator_bridge.py]
+mature_optimizer_root: ${EVOTAILOR_MATURE_ROOT}/src
+mature_optimizer_policies:
+  tpe: {n_startup_trials: 10, multivariate: true, prior_weight: 1.0}
+  slo_guard: {T_init: 1.0, patience: 4, n_initial_random: 3, enable_blacklisting: true}
+  scoot: {model_type: rf, rand_sample: 3, timeout_s: 900}

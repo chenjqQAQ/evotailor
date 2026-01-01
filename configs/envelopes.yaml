@@ -1,0 +1,38 @@
+# Resource envelopes (paper §5.5, Table A2).
+# Envelopes constrain the resources available at execution time; the optimizer must keep
+# producing deployable configurations as they tighten.  `scan_pass_rate` is the share of a
+# fixed 33-point memory-utilization scan that remains admissible under the envelope; it is
+# a coarse indicator, not an estimate of the feasible volume of the full space.
+envelopes:
+  T1:
+    label: none
+    gpu_hog_gib: null        # no per-GPU occupancy imposed
+    cpu_cores: null
+    ram_gib: null
+    io_read_mbps: null
+    io_write_mbps: null
+    scan_pass_rate: 1.00
+  T2:
+    label: light
+    gpu_hog_gib: 20
+    cpu_cores: 8
+    ram_gib: 16
+    io_read_mbps: 800
+    io_write_mbps: 400
+    scan_pass_rate: 0.727
+  T3:
+    label: moderate
+    gpu_hog_gib: 35
+    cpu_cores: 4
+    ram_gib: 12
+    io_read_mbps: 400
+    io_write_mbps: 200
+    scan_pass_rate: 0.485
+  T4:
+    label: heavy
+    gpu_hog_gib: 50
+    cpu_cores: 2
+    ram_gib: 8
+    io_read_mbps: 200
+    io_write_mbps: 100
+    scan_pass_rate: 0.242

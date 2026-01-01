@@ -1,0 +1,17 @@
+campaign_id: simulated_neighborhood_baseline
+run_mode: baseline
+execution_backend: simulated
+max_trials: 8
+episode_size: 4
+seed: 42
+objective_direction: minimize
+search_space: configs/search_spaces/common_v2.json
+run_root: runs
+baseline_proposer: neighborhood
+use_llm_selector: false
+use_outer_agent: false
+simulated_noise: 0.01
+mature_optimizer_root: ${EVOTAILOR_MATURE_ROOT}/src
+mature_optimizer_policies:
+  slo_guard: {T_init: 1.0, patience: 4, n_initial_random: 3, enable_blacklisting: true}
+  scoot: {model_type: rf, rand_sample: 3, timeout_s: 900}

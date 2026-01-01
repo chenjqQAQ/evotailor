@@ -1,0 +1,58 @@
+# Scenario descriptors (paper §3, Table A1).
+# A scenario is z = (workload, model, hardware, framework).  Absolute paths and host
+# names are injected at run time through environment variables (see .env.example).
+
+scenarios:
+  PD:
+    workload: agentsociety_pd
+    description: Prisoner's dilemma interaction among agents.
+    trace: ${EVOTAILOR_DATA_ROOT}/traces/pd/workload.json
+    operations: 271
+    window_operations: 1040
+    agents: 8
+    peak_concurrency: 4
+    model: ${EVOTAILOR_MODEL_ROOT}/Qwen3-4B
+    model_name: Qwen3-4B
+    frameworks: [vllm, sglang, musa_vllm]
+    objective: e2e
+  PG:
+    workload: agentsociety_pg
+    description: Public-goods game with contribution decisions.
+    trace: ${EVOTAILOR_DATA_ROOT}/traces/pg/workload.json
+    operations: 255
+    window_operations: 1016
+    agents: 8
+    peak_concurrency: 5
+    model: ${EVOTAILOR_MODEL_ROOT}/Qwen3-4B
+    model_name: Qwen3-4B
+    frameworks: [vllm, sglang, musa_vllm]
+    objective: e2e
+  SM:
+    workload: agentsociety_sm
+    description: Social-media simulation with information processing.
+    trace: ${EVOTAILOR_DATA_ROOT}/traces/sm/workload.json
+    operations: 263
+    window_operations: 1670
+    agents: 8
+    peak_concurrency: 5
+    model: ${EVOTAILOR_MODEL_ROOT}/Qwen3-4B
+    model_name: Qwen3-4B
+    frameworks: [vllm, sglang, musa_vllm]
+    objective: e2e
+  ComfyBench:
+    workload: comfybench_sample4
+    description: Four agent-generated ComfyUI workflows (generate/edit/extend/upscale).
+    trace: ${EVOTAILOR_DATA_ROOT}/tasks/comfybench/sample4.json
+    tasks: 4
+    model: ${EVOTAILOR_MODEL_ROOT}/Qwen3.8-27B
+    model_name: Qwen3.8-27B
+    resident_stage: stable-diffusion-1.5
+    frameworks: [vllm]
+    objective: e2e
+
+# Environments used in the paper (Table A1).  Declared here so that a campaign records the
+# exact combination it was run on.
+environments:
+  a100_vllm:      {hardware: a100-80gb, devices: 8, framework: vllm}
+  a100_sglang:    {hardware: a100-80gb, devices: 2, framework: sglang}
+  mtt_musa_vllm:  {hardware: mtt-s5000-80gb, devices: 8, framework: musa_vllm}

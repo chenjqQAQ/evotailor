@@ -1,0 +1,71 @@
+{
+  "engine_config": {
+    "schema_version": 1,
+    "model_name": "Qwen3-4B-nothink (replace with verified model identity)",
+    "system_name": "a100_sxm",
+    "backend": "vllm",
+    "backend_version": "REPLACE_WITH_DOCKER_VLLM_VERSION",
+    "tp_size": 1,
+    "pp_size": 1,
+    "attention_dp_size": 1,
+    "cp_size": null,
+    "moe_tp_size": null,
+    "moe_ep_size": null,
+    "weight_dtype": null,
+    "activation_dtype": null,
+    "moe_dtype": null,
+    "kv_cache_dtype": null,
+    "kv_block_size": 16,
+    "nextn": null,
+    "nextn_accept_rates": null,
+    "extra": {}
+  },
+  "options": {
+    "min_observations": 3,
+    "max_num_tokens": 32768,
+    "max_batch_size": 256,
+    "max_kv_tokens": 2000000,
+    "min_faster_correction_factor": 0.5,
+    "max_slower_correction_factor": 2.0
+  },
+  "parameter_map": {
+    "deployment.tensor_parallel_size": "tp_size",
+    "deployment.pipeline_parallel_size": "pp_size",
+    "deployment.data_parallel_size": "attention_dp_size",
+    "model.kv_cache_dtype": {"path": "kv_cache_dtype", "values": {"auto": null}},
+    "vllm.block_size": "kv_block_size"
+  },
+  "calibration_context_parameters": [
+    "vllm.max_cudagraph_capture_size"
+  ],
+  "allow_legacy_global_observations": false,
+  "workload_iterations": [
+    [
+      {
+        "version": 1,
+        "worker_id": "template",
+        "dp_rank": 0,
+        "counter_id": 0,
+        "wall_time": 0.001,
+        "scheduled_requests": {
+          "num_prefill_requests": 1,
+          "sum_prefill_tokens": 2048,
+          "var_prefill_length": 0.0,
+          "sum_prefill_kv_tokens": 0,
+          "num_decode_requests": 0,
+          "sum_decode_kv_tokens": 0,
+          "var_decode_kv_tokens": 0.0
+        },
+        "queued_requests": {
+          "num_prefill_requests": 0,
+          "sum_prefill_tokens": 0,
+          "var_prefill_length": 0.0,
+          "num_decode_requests": 0,
+          "sum_decode_kv_tokens": 0,
+          "var_decode_kv_tokens": 0.0
+        }
+      }
+    ]
+  ],
+  "state_path": "../runs/aiconfigurator_fpms.jsonl"
+}
