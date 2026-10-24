@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from evotailor.experience.guard import WorkspaceGuard, is_root_trust, patch_paths
-from evotailor.policy import SearchPolicy
+from evotailor.loops.policy import SearchPolicy
 from evotailor.spaces.search_space import Dimension, SearchSpace
 
 

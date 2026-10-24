@@ -80,10 +80,10 @@ def weight_memory_verdict(
         return Infeasible(
             code="DATA_PARALLEL_UNSUPPORTED",
             detail=(
-                f"data_parallel_size={dp} 在本机的 vLLM 0.19.1 上无法启动："
-                "DP 协调进程拿不到引擎的 ZMQ 地址就退出（"
-                "DP Coordinator process failed to report ZMQ addresses during startup），"
-                "去掉所有资源限制后仍以同一错误失败。"
+                f"data_parallel_size={dp} cannot launch with this vLLM 0.19.1 build: "
+                "the DP coordinator exits without the engine ZMQ address ("
+                "DP Coordinator process failed to report ZMQ addresses during startup), "
+                "The same error persists without resource limits."
             ),
             parameters=dict(parameters),
         )
@@ -92,8 +92,8 @@ def weight_memory_verdict(
         return Infeasible(
             code="PARALLEL_EXCEEDS_ALLOCATION",
             detail=(
-                f"TP×PP×DP = {tp}×{pp}×{dp} = {tp * pp * dp} 需要 {tp * pp * dp} 张 GPU，"
-                f"本次只分配了 {gpu_count} 张，引擎无法启动。"
+                f"TP * PP * DP = {tp} * {pp} * {dp} = {tp * pp * dp} requires {tp * pp * dp} GPUs; "
+                f"only {gpu_count} are allocated, so the engine cannot launch."
             ),
             parameters=dict(parameters),
         )
@@ -110,9 +110,9 @@ def weight_memory_verdict(
         return Infeasible(
             code="WEIGHTS_EXCEED_MEMORY_BUDGET",
             detail=(
-                f"权重 {weights_bytes / 1024**3:.1f} GiB 超过 "
-                f"gpu_memory_utilization={gmu:.3f} × {tp * pp} 张卡给出的预算 "
-                f"{budget / 1024**3:.1f} GiB，没有空间分配 KV cache，引擎必然Launch failed。"
+                f"Weight size {weights_bytes / 1024**3:.1f} GiB exceeds "
+                f"the budget for gpu_memory_utilization={gmu:.3f} across {tp * pp} devices, "
+                f"{budget / 1024**3:.1f} GiB, leaving no KV-cache capacity; the engine cannot launch."
             ),
             parameters=dict(parameters),
         )

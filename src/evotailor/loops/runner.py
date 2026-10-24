@@ -27,7 +27,7 @@ from evotailor.contracts import (
 )
 from evotailor.experience.retrieval import project_for_mode
 from evotailor.workloads.discovery.workload import flatten_facts
-from evotailor.evidence import build_evidence
+from evotailor.selection.evidence import build_evidence
 from evotailor.experience.code_bank import EvolutionApplier
 from evotailor.experience.bank import build_experience, write_experience
 from evotailor.experience.guard import WorkspaceGuard
@@ -51,11 +51,11 @@ from evotailor.selection.resources import CampaignResourceLease
 from evotailor.llm import client_from_config
 from evotailor.objective import best_trial, improvement
 from evotailor.experiment.parameter_experiments import next_candidate, schedule
-from evotailor.policy import PolicyManager
+from evotailor.loops.policy import PolicyManager
 from evotailor.loops.proposals_llm import LLMProposalError, LLMProposer
 from evotailor.loops.proposals import Proposer, default_proposers
 from evotailor.selection.prediction.aiconfigurator import AIConfiguratorAdapter
-from evotailor.priors import (
+from evotailor.selection.priors import (
     build_prior_knowledge,
     gpu_count,
     gpu_memory_bytes,
@@ -75,34 +75,34 @@ PROPOSER_LABELS = {
     "tpe": "Optuna TPE",
     "slo_guard": "SLO-Guard",
     "scoot": "SCOOT/HEBO",
-    "coverage": "空间覆盖算法",
+    "coverage": "Space coverage",
     "neighborhood": "Neighbourhood search around the incumbent",
-    "llm": "LLM 下一轮实验提案",
+    "llm": "LLM next-trial proposal",
     "validation": "Repeat validation of the best configuration",
 }
 
 
 PROPOSER_ACTIONS = {
-    "tpe": "根据已有 Trial 构建 TPE 模型并提出候选",
-    "slo_guard": "调用 SLO-Guard 优化器提出候选",
-    "scoot": "调用 SCOOT/HEBO 优化器提出候选",
-    "coverage": "在冻结搜索空间中寻找覆盖距离最大的候选",
-    "neighborhood": "在当前最优配置附近搜索可行候选",
-    "llm": "根据完整历史、任务、硬件、阶段和空间提出下一轮测试配置",
+    "tpe": "Fit a TPE model to previous trials and propose a candidate",
+    "slo_guard": "Request a candidate from SLO-Guard",
+    "scoot": "Request a candidate from SCOOT/HEBO",
+    "coverage": "Find the candidate with the largest coverage distance in the frozen space",
+    "neighborhood": "Search for feasible candidates near the incumbent",
+    "llm": "Propose a test configuration using history, workload, hardware, phase, and search-space evidence",
 }
 
 
 PHASE_LABELS = {
-    Phase.MODELING: "全局建模",
-    Phase.MIXED: "全局与局部混合搜索",
+    Phase.MODELING: "Global modeling",
+    Phase.MIXED: "Mixed global and local search",
     Phase.LOCAL: "Neighbourhood search around the incumbent",
     Phase.VALIDATION: "Repeat validation of the best configuration",
 }
 
 
 STATUS_LABELS = {
-    TrialStatus.SUCCEEDED: "成功",
-    TrialStatus.FAILED: "失败",
+    TrialStatus.SUCCEEDED: "succeeded",
+    TrialStatus.FAILED: "failed",
 }
 
 
@@ -224,17 +224,17 @@ class CampaignRunner:
         ):
             self.trace.emit(
                 "Launch check",
-                "正在检查Backing model中转站，确认可用后才会消耗 Trial 预算。",
-                中转地址=config.base_url,
-                模型=config.model,
+                "Checking the model endpoint before consuming trial budget.",
+                base_url=config.base_url,
+                model=config.model,
             )
             connectivity = client.check_connectivity()
             self.trace.emit(
                 "Launch check",
-                "Backing model中转站连接正常。",
-                中转地址=connectivity["base_url"],
-                模型=connectivity["model"],
-                模型列表中可见=connectivity["listed"],
+                "The model endpoint is reachable.",
+                base_url=connectivity["base_url"],
+                model=connectivity["model"],
+                model_listed=connectivity["listed"],
             )
         self.selector = SelectorAgent(client)
         self.outer = OuterAgent(client)
@@ -506,10 +506,10 @@ class CampaignRunner:
             )
             candidates.append(candidate)
             self.trace.emit(
-                "步骤1/6：验证候选",
-                f"重复执行当前最优候选 {candidate.candidate_id}，用于验证结果稳定性。",
-                原始Trial=incumbent.trial_id,
-                Candidate parameters=candidate.parameters,
+                "Step 1/6: validate candidate",
+                f"Repeat the incumbent candidate {candidate.candidate_id} to assess stability.",
+                original_trial=incumbent.trial_id,
+                candidate_parameters=candidate.parameters,
             )
         for proposer in proposers:
             if isinstance(proposer, LLMProposer):
@@ -520,10 +520,10 @@ class CampaignRunner:
                     prior_knowledge=self._prior_knowledge(history),
                 )
             self.trace.emit(
-                "步骤1/6：调用候选工具",
-                f"正在调用 {PROPOSER_LABELS.get(proposer.name, proposer.name)}。",
-                Current stage=PHASE_LABELS[phase],
-                工具动作=PROPOSER_ACTIONS.get(proposer.name, "生成候选配置"),
+                "Step 1/6: call proposer",
+                f"Calling {PROPOSER_LABELS.get(proposer.name, proposer.name)}.",
+                current_stage=PHASE_LABELS[phase],
+                proposer_action=PROPOSER_ACTIONS.get(proposer.name, "Generate a candidate configuration"),
             )
             candidate = None
             for attempt in range(20):
@@ -539,9 +539,9 @@ class CampaignRunner:
                 except Exception as exc:
                     errors[proposer.name] = f"{type(exc).__name__}: {exc}"
                     self.trace.emit(
-                        "候选工具错误",
-                        f"{PROPOSER_LABELS.get(proposer.name, proposer.name)} 调用失败。",
-                        错误=errors[proposer.name],
+                        "Proposer error",
+                        f"{PROPOSER_LABELS.get(proposer.name, proposer.name)} failed.",
+                        error=errors[proposer.name],
                     )
                     if isinstance(exc, LLMProposalError):
                         # The model proposer is one source among several. A relay that
@@ -563,14 +563,14 @@ class CampaignRunner:
                 candidates.append(candidate)
                 self.trace.emit(
                     "Step 1/6: candidates generated",
-                    f"{PROPOSER_LABELS.get(proposer.name, proposer.name)} 给出了候选 {candidate.candidate_id}。",
-                    Candidate parameters=candidate.parameters,
-                    算法信息=candidate.metadata,
+                    f"{PROPOSER_LABELS.get(proposer.name, proposer.name)} proposed candidate {candidate.candidate_id}.",
+                    candidate_parameters=candidate.parameters,
+                    proposer_metadata=candidate.metadata,
                 )
             elif proposer.name not in errors:
                 self.trace.emit(
-                    "步骤1/6：候选已跳过",
-                    f"{PROPOSER_LABELS.get(proposer.name, proposer.name)} 没有找到新的、不重复的候选。",
+                    "Step 1/6: candidate skipped",
+                    f"{PROPOSER_LABELS.get(proposer.name, proposer.name)} found no new unique candidate.",
                 )
         if not candidates:
             raise RuntimeError("all proposers exhausted or duplicated the known space")
@@ -613,7 +613,7 @@ class CampaignRunner:
         self.store.append("EpisodeBoundaryDecided", decision)
         self.trace.emit(
             "Episode boundary decision",
-            f"Episode {episode} 边界 Agent 决定：{decision['decision']}。",
+            f"Episode {episode} boundary decision: {decision['decision']}.",
             **decision,
         )
         return decision
@@ -641,8 +641,8 @@ class CampaignRunner:
         )
         self.trace.emit(
             "Resource lease",
-            "正在为本 Campaign 申请整段运行期的 GPU 独占租约。",
-            资源=lease.resources,
+            "Requesting an exclusive GPU lease for the full campaign.",
+            resources=lease.resources,
         )
         lease.acquire()
         # The Trial wrapper is a subprocess and takes its own lease; it cannot
@@ -654,8 +654,8 @@ class CampaignRunner:
         )
         self.trace.emit(
             "Resource lease",
-            "已获得整段运行期的 GPU 独占租约；复测结束后才释放。",
-            资源=lease.resources,
+            "Acquired the campaign GPU lease; it remains held until validation finishes.",
+            resources=lease.resources,
         )
         return lease
 
@@ -667,7 +667,7 @@ class CampaignRunner:
         lease.release()
         os.environ.pop("EVOTAILOR_CAMPAIGN_HELD_RESOURCES", None)
         self.campaign_lease = None
-        self.trace.emit("Resource lease", "本 Campaign 已结束，GPU 独占租约已释放。")
+        self.trace.emit("Resource lease", "The campaign finished and its exclusive GPU lease was released.")
 
     def run(self, stop_after: int | None = None) -> dict[str, Any]:
         """Run or resume a campaign.
@@ -696,25 +696,25 @@ class CampaignRunner:
             end = min(end, stop_after)
         self.trace.emit(
             "Task launch",
-            "正在启动或恢复配置搜索任务。",
-            Task ID=self.config.campaign_id,
-            运行模式=self.config.run_mode.value,
-            测试后端=self.config.execution_backend.value,
-            Backing model=self.config.model
+            "Starting or resuming configuration search.",
+            task_id=self.config.campaign_id,
+            run_mode=self.config.run_mode.value,
+            execution_backend=self.config.execution_backend.value,
+            backing_model=self.config.model
             if (
                 self.config.use_llm_selector
                 or self.config.use_outer_agent
                 or self.config.use_episode_planner
             )
-            else "未启用",
-            已完成轮数=len(history),
-            本次运行到=end,
-            Total rounds=self.config.max_trials,
-            Episode总数范围=f"{self.config.episode_min_count}-{self.config.episode_max_count}",
-            Episode最小Trial数=self.config.episode_min_trials,
-            Episode最大Trial数=self.config.episode_max_trials,
-            动态Episode预算="由每个 Trial 后的边界 Agent 决定",
-            结果目录=str(self.run_dir),
+            else "disabled",
+            completed_trials=len(history),
+            run_until=end,
+            total_rounds=self.config.max_trials,
+            episode_count_range=f"{self.config.episode_min_count}-{self.config.episode_max_count}",
+            episode_min_trials=self.config.episode_min_trials,
+            episode_max_trials=self.config.episode_max_trials,
+            episode_budget_policy="Decided by the boundary agent after each trial",
+            run_dir=str(self.run_dir),
         )
         if not any(x["event_type"] == "CampaignStarted" for x in self.store.events()):
             self.store.append(
@@ -749,15 +749,21 @@ class CampaignRunner:
             else:
                 cached_plan = {
                     "phase_plan": [phase.value],
-                    "rationale": "使用配置的确定性阶段策略。",
+                    "rationale": "Use the configured deterministic phase policy.",
                     "used_fallback": False,
                 }
             self.trace.emit(
                 "Episode plan",
-                f"Trial {index + 1} 使用已记录的阶段决策。",
+                f"Trial {index + 1} uses the recorded phase decision.",
                 Episode=episode,
-                Current stage=PHASE_LABELS[phase],
-                剩余预算=self.config.max_trials - index - 1,
+                current_stage=PHASE_LABELS[phase],
+                stage_plan=[PHASE_LABELS[Phase(value)] for value in cached_plan["phase_plan"]],
+                trials_per_stage={
+                    value: cached_plan["phase_plan"].count(value)
+                    for value in dict.fromkeys(cached_plan["phase_plan"])
+                },
+                planning_rationale=cached_plan.get("rationale", ""),
+                remaining_budget=self.config.max_trials - index - 1,
             )
             names = (
                 []
@@ -775,10 +781,10 @@ class CampaignRunner:
             )
             if len(active) != len(names):
                 self.trace.emit(
-                    "策略生效",
-                    "Current policy已停用部分候选工具。",
-                    原启用集合=names,
-                    实际调用集合=active,
+                    "Policy applied",
+                    "The current policy disabled some proposers.",
+                    configured_proposers=names,
+                    active_proposers=active,
                 )
                 names = active
             # Record which tools this Trial really asked, so the effect of a
@@ -796,10 +802,10 @@ class CampaignRunner:
             proposers = [self.proposers[name] for name in names]
             self.trace.emit(
                 "New round",
-                f"开始第 {index + 1}/{self.config.max_trials} 轮，当前搜索阶段为“{PHASE_LABELS[phase]}”。",
-                Current episode=f"{episode}",
-                Current episode内Trial=f"{episode_trial}",
-                将调用的候选工具=[PROPOSER_LABELS.get(name, name) for name in names]
+                f"Starting trial {index + 1}/{self.config.max_trials}; phase: {PHASE_LABELS[phase]}.",
+                current_episode=f"{episode}",
+                episode_trial=f"{episode_trial}",
+                proposers=[PROPOSER_LABELS.get(name, name) for name in names]
                 or [PROPOSER_LABELS["validation"]],
             )
             candidates, predictions, selection, chosen = self._prepare_trial(
@@ -808,14 +814,14 @@ class CampaignRunner:
             incumbent = self._best(history)
             before = incumbent.objective if incumbent and incumbent.objective is not None else None
             execution_action = (
-                "调用 SimulatedExecutor 直接生成模拟Test result；不会部署模型，也不会执行真实工作负载。"
+                "SimulatedExecutor generates a simulated result without deploying a model or running a real workload."
                 if self.config.execution_backend == ExecutionBackend.SIMULATED
-                else "调用配置好的 Host/Docker Trial 执行器。"
+                else "Calling the configured host or Docker trial executor."
             )
             self.trace.emit(
-                "步骤4/6：执行测试",
+                "Step 4/6: execute trial",
                 execution_action,
-                调用工具=self.config.command
+                executor_command=self.config.command
                 if self.config.execution_backend != ExecutionBackend.SIMULATED
                 else "SimulatedExecutor.execute",
             )
@@ -890,15 +896,15 @@ class CampaignRunner:
         )
         self.trace.emit(
             "Task finished",
-            "配置搜索Task completed。"
+            "Configuration search completed."
             if len(history) >= self.config.max_trials
-            else "已保存任务断点。",
-            已完成轮数=len(history),
-            最优Target value=None if best is None else best.objective,
-            最优候选=None if best is None else best.candidate.candidate_id,
-            结果摘要=str(self.run_dir / "summary.json"),
-            中文日志=str(self.trace.console_path),
-            结构化轨迹=str(self.trace.jsonl_path),
+            else "Saved a campaign checkpoint.",
+            completed_trials=len(history),
+            best_objective=None if best is None else best.objective,
+            best_candidate=None if best is None else best.candidate.candidate_id,
+            summary_path=str(self.run_dir / "summary.json"),
+            console_log=str(self.trace.console_path),
+            trace_path=str(self.trace.jsonl_path),
         )
         if len(history) >= self.config.max_trials:
             self.store.append_once("CampaignCompleted", summary, "campaign_id")
@@ -1115,18 +1121,18 @@ class CampaignRunner:
             if attemptable:
                 if newly_refused:
                     self.trace.emit(
-                        "步骤1/6：硬约束驳回",
-                        f"有 {len(newly_refused)} 个候选无法启动引擎，已驳回并让候选算法重新生成；"
-                        "本次不消耗 Trial 预算。",
-                        驳回代码=sorted({item.code for item in newly_refused}),
-                        示例驳回理由=[item.detail for item in newly_refused][:2],
+                        "Step 1/6: hard-constraint rejection",
+                        f"Rejected {len(newly_refused)} candidates that cannot launch the engine and requested replacements; "
+                        "no trial budget was consumed.",
+                        rejection_codes=sorted({item.code for item in newly_refused}),
+                        rejection_examples=[item.detail for item in newly_refused][:2],
                     )
                 return attemptable, errors
             self.trace.emit(
-                "步骤1/6：候选全部被驳回",
-                f"本轮 {len(newly_refused)} 个候选都无法启动引擎，已告知候选算法并重新生成。",
-                驳回代码=sorted({item.code for item in newly_refused}),
-                累计驳回=len(refused),
+                "Step 1/6: all candidates rejected",
+                f"All {len(newly_refused)} candidates cannot launch the engine; proposers were notified to generate replacements.",
+                rejection_codes=sorted({item.code for item in newly_refused}),
+                rejection_count=len(refused),
             )
         raise RuntimeError(
             f"proposers offered only provably-fatal configurations for "
@@ -1169,11 +1175,11 @@ class CampaignRunner:
                 return Selection(
                     candidate_id=fallback[0].candidate_id,
                     reason=(
-                        "建模阶段尚无任何实测配置，覆盖算法给出的候选在全空间内最大化"
-                        "与已知点的最小距离，因此直接选择它以取得第一条真实观测。"
+                        "No measured configuration exists in the modeling phase. The coverage candidate maximizes "
+                        "the minimum distance to known points, so it is selected for the first real observation."
                     ),
                     confidence=1.0,
-                    risk_factors=["该配置尚无任何预测，本轮价值在于建立首个锚点。"],
+                    risk_factors=["No prediction exists for this configuration; this trial establishes the first measured anchor."],
                     used_fallback=True,
                 )
             return None
@@ -1186,12 +1192,12 @@ class CampaignRunner:
         return Selection(
             candidate_id=chosen.candidate_id,
             reason=(
-                f"建模阶段以覆盖为先：该候选与本 Campaign 已实测配置的最小搜索空间距离为"
-                f"{best_distance:.4f}，是候选中最大的，因此选择它来填充最空白的区域。"
-                "该阶段的目的是把空间测开，而不是细化已有最优。"
+                f"Modeling prioritizes coverage: this candidate has a minimum distance of "
+                f"{best_distance:.4f} to measured configurations, the largest among the candidates, so it covers an unexplored region."
+                "This phase measures the wider space rather than refining the incumbent."
             ),
             confidence=1.0,
-            risk_factors=["选择依据是覆盖距离而非预测Target value；该区域尚无拟合估计。"],
+            risk_factors=["Selection uses coverage distance rather than a predicted objective; this region has no fitted estimate."],
             used_fallback=True,
         )
 
@@ -1311,24 +1317,24 @@ class CampaignRunner:
                 ]
             )
         prediction_mode = (
-            "AIConfigurator 测试代理 + 残差校准"
+            "AIConfigurator test proxy + residual calibration"
             if self.config.execution_backend == ExecutionBackend.SIMULATED
-            else "AIConfigurator 前向预测 + 配置相关任务模型"
+            else "AIConfigurator forward prediction + configuration-dependent task model"
         )
         if self.config.run_mode == RunMode.BASELINE:
-            prediction_mode = "baseline 模式不使用Performance prediction"
+            prediction_mode = "Baseline mode does not use performance prediction"
         self.trace.emit(
             "Step 2/6: performance prediction",
-            f"已完成 {len(predictions)} 个候选的Performance prediction。",
-            Prediction method=prediction_mode,
-            Predicted result=[
+            f"Completed performance predictions for {len(predictions)} candidates.",
+            prediction_method=prediction_mode,
+            predicted_result=[
                 {
-                    "Candidate ID": item.candidate_id,
-                    "原始预测": item.raw,
+                    "candidate_id": item.candidate_id,
+                    "raw_prediction": item.raw,
                     "Calibrated prediction": item.calibrated,
                     "Uncertainty": item.uncertainty,
-                    "校准样本数": item.samples,
-                    "预测方法": item.method,
+                    "calibration_samples": item.samples,
+                    "prediction_method": item.method,
                 }
                 for item in predictions
             ],
@@ -1336,16 +1342,16 @@ class CampaignRunner:
         self.store.save_candidates(index, candidates)
         self.store.save_predictions(index, predictions)
         self.trace.emit(
-            "步骤3/6：Agent决策",
-            f"正在调用Backing model {self.config.model}，让选择 Agent 比较候选。"
+            "Step 3/6: agent decision",
+            f"Calling model {self.config.model} to compare candidates."
             if self.config.use_llm_selector
-            else "选择 Agent 未启用Backing model，将使用确定性数值选择器。",
-            Current stage=PHASE_LABELS[phase],
-            Candidate ID=[item.candidate_id for item in candidates],
-            历史Trial数量=len(history),
-            优化方向="Target value越小越好"
+            else "The selector has no model enabled; using the deterministic numerical selector.",
+            current_stage=PHASE_LABELS[phase],
+            candidate_id=[item.candidate_id for item in candidates],
+            historical_trial_count=len(history),
+            objective_direction="Lower objective values are better"
             if self.config.objective_direction == "minimize"
-            else "Target value越大越好",
+            else "Higher objective values are better",
         )
         selection = None
         if len(candidates) == 1 and candidates[0].metadata.get("source_seed"):
@@ -1362,11 +1368,11 @@ class CampaignRunner:
             selection = Selection(
                 candidate_id=forced_candidate.candidate_id,
                 reason=(
-                    "本次运行按预先固定的配置执行，不使用提案算法或选择 Agent。"
-                    "该配置在录制前由搜索空间几何中心确定，不参考任何实验结果。"
+                    "This run uses a fixed configuration without proposers or the selector agent."
+                    "The configuration was chosen from the geometric center before recording, without using experimental results."
                 ),
                 confidence=1.0,
-                risk_factors=["强制配置：本轮结果仅用于产出冻结轨迹，不作为搜索成绩。"],
+                risk_factors=["Forced configuration: this result creates a frozen trace and is not a search result."],
                 used_fallback=True,
             )
         if (
@@ -1404,12 +1410,12 @@ class CampaignRunner:
         chosen = next(x for x in candidates if x.candidate_id == selection.candidate_id)
         self.trace.emit(
             "Step 3/6: agent verdict",
-            f"选择了 {PROPOSER_LABELS.get(chosen.proposer, chosen.proposer)} 提出的候选 {chosen.candidate_id}。",
-            Decision rationale=selection.reason,
-            置信度=selection.confidence,
-            Risk factors=selection.risk_factors,
-            Fallback used=selection.used_fallback,
-            Final parameters=chosen.parameters,
+            f"Selected candidate {chosen.candidate_id} from {PROPOSER_LABELS.get(chosen.proposer, chosen.proposer)}.",
+            decision_rationale=selection.reason,
+            confidence=selection.confidence,
+            risk_factors=selection.risk_factors,
+            fallback_used=selection.used_fallback,
+            final_parameters=chosen.parameters,
         )
         return candidates, predictions, selection, chosen
 
@@ -1487,10 +1493,10 @@ class CampaignRunner:
             raise ValueError(f"Measured Trial {result.trial_id} has no durable selection")
         self.trace.emit(
             "Step 4/6: test result",
-            f"Trial {result.trial_id} 已完成，状态为“{STATUS_LABELS[result.status]}”。",
-            Target value=result.objective,
-            指标=result.metrics,
-            错误=result.error,
+            f"Trial {result.trial_id} completed with status {STATUS_LABELS[result.status]}.",
+            target_value=result.objective,
+            metrics=result.metrics,
+            error=result.error,
         )
         if (
             self.config.run_mode == RunMode.PORTFOLIO_AGENT
@@ -1520,11 +1526,11 @@ class CampaignRunner:
                 self.store.append_once("TrialObserved", {"trial_id": result.trial_id}, "trial_id")
                 self.trace.emit(
                     "Step 5/6: calibration feedback",
-                    "已把本轮Test result反馈给性能校准链路。",
-                    任务级残差是否接收=calibration_feedback.get("residual_accepted", False),
-                    真实FPM入库迭代数=native_feedback.get("accepted_iterations", 0),
-                    AIC校准上下文=native_feedback.get("calibration_context_key"),
-                    未接收FPMReason=native_feedback.get("reason"),
+                    "Sent this trial result to the performance calibration pipeline.",
+                    residual_accepted=calibration_feedback.get("residual_accepted", False),
+                    accepted_fpm_iterations=native_feedback.get("accepted_iterations", 0),
+                    aic_calibration_context=native_feedback.get("calibration_context_key"),
+                    fpm_rejection_reason=native_feedback.get("reason"),
                 )
             except Exception as exc:
                 result.validity["aic_feedback_accepted"] = False
@@ -1552,10 +1558,10 @@ class CampaignRunner:
         self._rebuild_reputation()
         self.trace.emit(
             "Step 5/6: update history",
-            "已将本轮结果与事前预测误差写入历史，并更新学习数据和候选来源统计。",
-            相对此前最优的改进量=delta,
-            当前最优Target value=None if self._best(history) is None else self._best(history).objective,
-            校准样本数=len(self.aic.calibrator.pairs),
+            "Recorded the result and prediction error in history, and updated learning data and proposer statistics.",
+            improvement=delta,
+            best_objective=None if self._best(history) is None else self._best(history).objective,
+            calibration_samples=len(self.aic.calibrator.pairs),
         )
         self.store.append_once(
             "TrialCompleted",
@@ -1576,10 +1582,10 @@ class CampaignRunner:
             episode_start = index + 1 - episode_trial
             episode_results = history[episode_start : index + 1]
             self.trace.emit(
-                "步骤6/6：外层Agent复盘",
-                f"Episode {episode} 已结束，正在调用外层 Agent 总结经验。",
-                本Episode包含的Trial=[item.trial_id for item in episode_results],
-                是否调用Backing model=self.config.use_outer_agent,
+                "Step 6/6: outer-agent review",
+                f"Episode {episode} finished; calling the outer agent to review its evidence.",
+                episode_trials=[item.trial_id for item in episode_results],
+                use_backing_model=self.config.use_outer_agent,
             )
             # The outer agent reasons from a deterministic evidence package
             # rather than a raw reputation table, because the search does not
@@ -1627,15 +1633,15 @@ class CampaignRunner:
             )
             self.trace.emit(
                 "Step 6/6: reflection complete",
-                f"外层 Agent 已完成 Episode {episode} 复盘。",
-                已确认事实=review.get("facts", []),
-                观察结果=review.get("observations", []),
-                待验证假设=review.get("hypotheses", []),
-                建议措施=review.get("proposed_changes", []),
-                后续验证计划=review.get("validation_plan", []),
-                策略修改=review.get("policy_patch", {}),
-                未修改Reason=review.get("no_change_reason"),
-                Backing model错误=review.get("review_error"),
+                f"The outer agent completed the review of Episode {episode}.",
+                facts=review.get("facts", []),
+                observations=review.get("observations", []),
+                hypotheses=review.get("hypotheses", []),
+                proposed_changes=review.get("proposed_changes", []),
+                validation_plan=review.get("validation_plan", []),
+                policy_patch=review.get("policy_patch", {}),
+                no_change_reason=review.get("no_change_reason"),
+                model_error=review.get("review_error"),
             )
             proposals = (
                 (review.get("parameter_experiments") or [])
@@ -1661,10 +1667,10 @@ class CampaignRunner:
                     )
                     self.trace.emit(
                         "Policy evolution",
-                        f"Episode {episode} 的策略修改已生效。",
-                        新策略版本=promoted.version,
+                        f"Applied the policy changes for Episode {episode}.",
+                        policy_version=promoted.version,
                         Change=patch,
-                        完整策略=promoted.model_dump(mode="json"),
+                        full_policy=promoted.model_dump(mode="json"),
                     )
                 except (TypeError, ValueError) as exc:
                     self.store.append(
@@ -1672,17 +1678,17 @@ class CampaignRunner:
                         {"episode": episode, "patch": patch, "reason": str(exc)},
                     )
                     self.trace.emit(
-                        "Policy evolution失败",
-                        f"Episode {episode} 的策略修改未能通过校验。",
+                        "Policy evolution failed",
+                        f"Policy changes for Episode {episode} failed validation.",
                         Change=patch,
                         Reason=str(exc),
                     )
             else:
                 self.trace.emit(
                     "Policy unchanged",
-                    f"Episode {episode} 复盘后没有修改搜索策略。",
-                    Reason=review.get("no_change_reason") or "外层 Agent 判断当前证据不足。",
-                    Current policy=self.policy_manager.current.model_dump(mode="json"),
+                    f"The Episode {episode} review left the search policy unchanged.",
+                    Reason=review.get("no_change_reason") or "The outer agent found insufficient evidence for a change.",
+                    current_policy=self.policy_manager.current.model_dump(mode="json"),
                 )
             self.store.append(
                 "EpisodeCompleted",
@@ -1740,7 +1746,7 @@ class CampaignRunner:
             elif name == "baseline":
                 arms.append((name, dict(self.space.safe_baseline)))
             else:
-                self.trace.emit("Final validation", f"未知的验证臂“{name}”，已跳过。")
+                self.trace.emit("Final validation", f"Skipped unknown validation arm {name}.")
         if not arms:
             return {
                 "available": False,
@@ -1752,11 +1758,11 @@ class CampaignRunner:
         ]
         self.trace.emit(
             "Final validation",
-            "正在对每个臂的最终配置做重复验证；这些 Trial 不计入搜索预算。",
-            重复次数=repeats,
-            验证臂=[name for name, _ in arms],
-            验证顺序=[f"{name}#{repeat}" for name, _, repeat in schedule],
-            搜索预算=self.config.max_trials,
+            "Repeating each arm's final configuration for validation; these trials are outside the search budget.",
+            repeats=repeats,
+            validation_arms=[name for name, _ in arms],
+            validation_schedule=[f"{name}#{repeat}" for name, _, repeat in schedule],
+            search_budget=self.config.max_trials,
         )
 
         records: list[dict[str, Any]] = []
@@ -1817,11 +1823,11 @@ class CampaignRunner:
             )
             self.trace.emit(
                 "Final validation",
-                f"验证 Trial {trial_id} 完成，状态为“{STATUS_LABELS[result.status]}”。",
-                验证臂=name,
-                第几次=repeat,
-                Target value=result.objective,
-                错误=result.error,
+                f"Validation trial {trial_id} completed with status {STATUS_LABELS[result.status]}.",
+                validation_arms=name,
+                repeat_index=repeat,
+                target_value=result.objective,
+                error=result.error,
             )
 
         summary: dict[str, Any] = {
@@ -1848,13 +1854,13 @@ class CampaignRunner:
         summary["path"] = str(path)
         self.trace.emit(
             "Final validation",
-            "最终配置的重复验证已完成。",
-            结果文件=str(path),
-            各臂结果={
+            "Repeated validation of the final configurations completed.",
+            result_path=str(path),
+            arm_results={
                 name: {
-                    "次数": stats["observations"],
-                    "均值": stats["mean"],
-                    "标准差": stats["stdev"],
+                    "count": stats["observations"],
+                    "mean": stats["mean"],
+                    "stdev": stats["stdev"],
                 }
                 for name, stats in summary["arms"].items()
             },
@@ -1967,13 +1973,13 @@ class CampaignRunner:
         )
         self.trace.emit(
             "Overall summary",
-            "外层 Agent 已完成整个 Campaign 的复盘。",
-            总结=plan.get("summary", []),
-            空间修改=plan.get("space_changes"),
-            策略修改=plan.get("policy_changes"),
-            目标修改=plan.get("objective_changes"),
-            代码提案数=len(plan.get("code_proposals") or []),
-            不修改Reason=plan.get("no_change_reason"),
+            "The outer agent completed its campaign review.",
+            summary=plan.get("summary", []),
+            space_changes=plan.get("space_changes"),
+            policy_patch=plan.get("policy_changes"),
+            objective_changes=plan.get("objective_changes"),
+            code_proposal_count=len(plan.get("code_proposals") or []),
+            no_change_reason=plan.get("no_change_reason"),
         )
 
         if self.store.event("EvolutionApplied", "campaign_id", self.config.campaign_id):
@@ -1981,8 +1987,8 @@ class CampaignRunner:
         if not self.config.auto_apply_evolution:
             self.trace.emit(
                 "Overall summary",
-                "本次未启用自动应用，复盘结果仅记录。",
-                结果文件=str(self.run_dir / "campaign_review.json"),
+                "Automatic application is disabled; the review is recorded only.",
+                result_path=str(self.run_dir / "campaign_review.json"),
             )
             return
 
@@ -2013,12 +2019,12 @@ class CampaignRunner:
             "campaign_id",
         )
         self.trace.emit(
-            "自进化应用",
-            "已把复盘结果应用到下一次运行。",
-            已应用=outcome.applied,
-            被拒绝=outcome.rejected,
-            代码提案结果=outcome.code,
-            进化事件=outcome.event_path,
-            下次搜索空间=outcome.next_space_path,
-            下次策略=outcome.next_policy_path,
+            "Apply evolution",
+            "Applied the review results to the next run.",
+            applied=outcome.applied,
+            rejected=outcome.rejected,
+            code_results=outcome.code,
+            evolution_event=outcome.event_path,
+            next_search_space=outcome.next_space_path,
+            next_policy=outcome.next_policy_path,
         )

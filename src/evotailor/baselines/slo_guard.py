@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from evotailor.baselines.registry import BaselineContext, TrialRecord, register
+from evotailor.baselines.registry import BaselineContext, register
 
 
 @register

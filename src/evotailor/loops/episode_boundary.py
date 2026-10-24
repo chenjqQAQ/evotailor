@@ -5,7 +5,7 @@ from typing import Any
 
 from evotailor.contracts import TrialResult
 
-SYSTEM_PROMPT = """You are an episode-boundary controller for an experiment. Decide only whether the current episode should continue or end. Respect the hard limits supplied by the kernel. Do not change total budget, search space, objective, or completed results. Return strict JSON: decision (continue or end_episode), reason, confidence, evidence_refs. Keep enum values and IDs in English; write explanations in Simplified Chinese."""
+SYSTEM_PROMPT = """You are an episode-boundary controller for an experiment. Decide only whether the current episode should continue or end. Respect the hard limits supplied by the kernel. Do not change total budget, search space, objective, or completed results. Return strict JSON: decision (continue or end_episode), reason, confidence, evidence_refs. Keep enum values and IDs in English; write explanations in English."""
 
 
 class EpisodeBoundaryAgent:
@@ -31,7 +31,7 @@ class EpisodeBoundaryAgent:
         remaining = total_trials - completed_trials
         base = {
             "decision": "continue",
-            "reason": "当前 Episode 尚未达到安全复盘条件。",
+            "reason": "The current episode has not met the conditions for a safe review.",
             "confidence": 1.0,
             "evidence_refs": [],
             "used_fallback": True,
@@ -39,34 +39,34 @@ class EpisodeBoundaryAgent:
         if remaining == 0:
             base.update(
                 decision="end_episode",
-                reason="Campaign 已用尽预算。",
+                reason="The campaign budget is exhausted.",
                 evidence_refs=[x.trial_id for x in current_episode],
             )
             return base
         if episode_trials < min_trials:
             base.update(
-                reason=f"当前 Episode 仅完成 {episode_trials} 个 Trial，低于最小长度 {min_trials}。",
+                reason=f"The episode has only {episode_trials} trials, below the minimum of {min_trials}.",
                 evidence_refs=[x.trial_id for x in current_episode],
             )
             return base
         if episode_trials >= max_trials or (remaining == 0):
             base.update(
                 decision="end_episode",
-                reason="达到 Episode 最大长度或 Campaign 已用尽预算。",
+                reason="The episode reached its maximum length or the campaign budget is exhausted.",
                 evidence_refs=[x.trial_id for x in current_episode],
             )
             return base
         if episode_count >= max_episodes:
-            base.update(reason="已达到最大 Episode 数，继续当前 Episode。")
+            base.update(reason="The maximum episode count is reached; continue the current episode.")
             return base
         if 0 < remaining < min_trials:
-            base.update(reason="剩余预算不能组成完整的下一 Episode，继续当前 Episode。")
+            base.update(reason="The remaining budget cannot fund another full episode; continue this one.")
             return base
         required_episodes = max(min_episodes - episode_count, 0)
         if (required_episodes and remaining == required_episodes * min_trials) or (
             remaining == min_trials and remaining > max_trials - episode_trials
         ):
-            base.update(decision="end_episode", reason="为后续 Episode 保留满足最小长度的预算。")
+            base.update(decision="end_episode", reason="Reserve enough budget for the minimum length of later episodes.")
             return base
         if not use_llm or self.client is None:
             return base
@@ -95,8 +95,8 @@ class EpisodeBoundaryAgent:
             if decision not in {"continue", "end_episode"}:
                 raise ValueError("invalid boundary decision")
             answer["decision"] = decision
-            answer["reason"] = str(answer.get("reason", "Agent 未提供理由。"))
-            # A worded value here ("中等偏低") used to raise and end the Campaign.
+            answer["reason"] = str(answer.get("reason", "The agent supplied no rationale."))
+            # A worded value here ("moderately low") used to raise and end the Campaign.
             # Confidence is an annotation; the decision field is what matters.
             try:
                 number = float(answer.get("confidence", 0.5))

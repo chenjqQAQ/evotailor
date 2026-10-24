@@ -19,26 +19,23 @@ from pathlib import Path
 #: Paths that decide whether a result is real. A patch touching any of them is
 #: refused, and the refusal is recorded rather than silently dropped.
 ROOT_TRUST_PATHS: tuple[str, ...] = (
-    "src/evotailor/preflight.py",
+    "src/evotailor/selection/preflight.py",
     "scripts/trial_wrapper.py",
     "scripts/agentsociety_runner.py",
-    "scripts/task_adapters/agentsociety_n8.py",
     "scripts/aiconfigurator_bridge.py",
-    "scripts/validate_aic_real_data.py",
-    "scripts/vllm_fpm_sitecustomize/sitecustomize.py",
+    "scripts/trace_replay_runner.py",
     "src/evotailor/execution/backends.py",
     "src/evotailor/contracts.py",
     "src/evotailor/objective.py",
     "src/evotailor/storage.py",
-    "src/evotailor/experiment.py",
-    "src/evotailor/resources.py",
-    "src/evotailor/evolution/guard.py",
+    "src/evotailor/experiment/__init__.py",
+    "src/evotailor/selection/resources.py",
+    "src/evotailor/experience/guard.py",
+    "src/evotailor/experience/performance.py",
+    "src/evotailor/loops/history.py",
     "pyproject.toml",
-    "src/evotailor/evolution/performance.py",
-    "src/evotailor/history.py",
-    "scripts/evaluate_evolved_search.py",
-    "scripts/trace_replay_runner.py",
 )
+
 
 _DIFF_PATH = re.compile(r"^(?:\+\+\+|---)\s+(?:[ab]/)?(\S+)")
 

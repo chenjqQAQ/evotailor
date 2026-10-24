@@ -26,7 +26,7 @@ The evidence package is computed deterministically from recorded trials. Check t
   exposure.confounded_dimensions lists dimensions whose effect is confounded with the proposer that proposed them.
   calibration reports how far predictions were from measurements.
 
-Return JSON with facts, observations, hypotheses, proposed_changes, no_change_reason, evidence_refs, validation_plan, and policy_patch, plus parameter_experiments (an optional list of {dimension, reference_trial, value, evidence_ref, rationale}). Each experiment must cite evidence.dimension_effects.<dimension>, reference a successful real target trial, and change exactly one parameter to an allowed value. The kernel schedules two real anchor/variant pairs, all four measurements consuming trial budget. Do not fabricate outcomes. Cite the evidence fields you relied on in evidence_refs. Use an empty policy_patch and explain why in no_change_reason when the evidence does not support a change. Keep IDs, parameter names, numeric values, and policy keys unchanged. Write the user-facing text in facts, observations, hypotheses, proposed_changes, no_change_reason, and validation_plan in Simplified Chinese."""
+Return JSON with facts, observations, hypotheses, proposed_changes, no_change_reason, evidence_refs, validation_plan, and policy_patch, plus parameter_experiments (an optional list of {dimension, reference_trial, value, evidence_ref, rationale}). Each experiment must cite evidence.dimension_effects.<dimension>, reference a successful real target trial, and change exactly one parameter to an allowed value. The kernel schedules two real anchor/variant pairs, all four measurements consuming trial budget. Do not fabricate outcomes. Cite the evidence fields you relied on in evidence_refs. Use an empty policy_patch and explain why in no_change_reason when the evidence does not support a change. Keep IDs, parameter names, numeric values, and policy keys unchanged. Write the user-facing text in facts, observations, hypotheses, proposed_changes, no_change_reason, and validation_plan in English."""
 
 
 class OuterAgent:
@@ -80,15 +80,15 @@ class OuterAgent:
         best = best_trial(trials, objective_direction)
         return {
             "facts": [
-                f"本 Episode 共完成 {len(trials)} 个 Trial。",
-                f"本 Episode 最优Target value：{best.objective if best else 'unavailable'}。",
+                f"This episode completed {len(trials)} trials.",
+                f"Best objective in this episode: {best.objective if best else 'unavailable'}.",
             ],
-            "observations": ["Backing model未成功返回，本复盘由确定性逻辑生成。"],
+            "observations": ["The model did not return a valid response; this review uses deterministic logic."],
             "hypotheses": [],
             "proposed_changes": [],
             "evidence_refs": [x.trial_id for x in trials],
-            "validation_plan": ["下一个 Episode 继续使用Current policy。"],
+            "validation_plan": ["Retain the current policy for the next episode."],
             "policy_patch": {},
-            "no_change_reason": "当前证据不足以支持安全的策略修改。",
+            "no_change_reason": "The evidence does not support a safe policy change.",
             "review_error": review_error,
         }

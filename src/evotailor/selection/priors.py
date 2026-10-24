@@ -148,14 +148,14 @@ def model_facts(runtime: dict[str, Any], discovery: dict[str, Any]) -> list[Prio
             PriorFact(
                 id="prior.model.weight_bytes",
                 statement=(
-                    f"服务模型权重共 {weights / 1024**3:.1f} GiB（{dtype}），"
-                    f"来自 {model_path} 的实际文件。"
+                    f"Served-model weights occupy {weights / 1024**3:.1f} GiB ({dtype}), "
+                    f"measured from files at {model_path}."
                 ),
                 implication=(
-                    "这个体积必须在配置声明的显存预算之内。TP 越大，每张卡分担的权重越少；"
-                    "显存利用率越低，留给 KV cache 的空间越少。"
+                    "Weights must fit the configured memory budget. Larger TP distributes weights across more devices; "
+                    "lower memory utilization leaves less space for the KV cache."
                 ),
-                source=f"{model_path} 的 safetensors 索引",
+                source=f"{model_path} safetensors index",
                 grade="measured",
             )
         )
@@ -164,13 +164,13 @@ def model_facts(runtime: dict[str, Any], discovery: dict[str, Any]) -> list[Prio
             PriorFact(
                 id="prior.hardware.gpu",
                 statement=(
-                    f"本次分配 {count} 张 GPU，每张 {memory / 1024**3:.0f} GiB 可用显存。"
+                    f"Allocated {count} GPUs with {memory / 1024**3:.0f} GiB available memory each."
                 ),
                 implication=(
-                    "TP×PP×DP 的总和不能超过这个卡数；"
-                    "并行度越高，单卡权重越小，但通信开销越大。"
+                    "TP * PP * DP cannot exceed the allocated device count; "
+                    "more parallelism reduces weights per device but increases communication overhead."
                 ),
-                source="nvidia-smi 实机探测 + /certs/docker/nvidia_visible_devices.txt",
+                source="nvidia-smi hardware probe + /certs/docker/nvidia_visible_devices.txt",
                 grade="measured",
             )
         )
@@ -181,16 +181,16 @@ def model_facts(runtime: dict[str, Any], discovery: dict[str, Any]) -> list[Prio
             PriorFact(
                 id="prior.model.kv_bytes_per_token",
                 statement=(
-                    f"每 token 的 KV cache 约 {per_token} 字节"
-                    f"（{full_layers} 个 full-attention 层；线性注意力层只占常数状态）。"
+                    f"The KV cache uses approximately {per_token} bytes per token "
+                    f"({full_layers} full-attention layers; linear-attention layers use constant state)."
                 ),
                 implication=(
-                    "`max_model_len` 与 `max_num_seqs` 的乘积决定最大 KV 需求，"
-                    "把它与上面可用的 KV 容量作比较即可判断一个组合是否装得下。"
-                    "装不下会让引擎在启动阶段失败；装得下并不说明它更快或更慢，"
-                    "那只能由真实测量回答，因此不要据此排除大值组合。"
+                    "The product of `max_model_len` and `max_num_seqs` determines maximum KV demand; "
+                    "compare it with available KV capacity to check whether a configuration fits."
+                    "Insufficient capacity causes launch failure. Fitting in memory does not imply better or worse performance; "
+                    "only real measurements can establish that, so do not reject larger values on that basis alone."
                 ),
-                source=f"{arch_source} 的 num_hidden_layers/layer_types/num_key_value_heads/head_dim",
+                source=f"{arch_source} num_hidden_layers/layer_types/num_key_value_heads/head_dim",
                 grade="derived",
             )
         )
@@ -204,15 +204,15 @@ def model_facts(runtime: dict[str, Any], discovery: dict[str, Any]) -> list[Prio
                             PriorFact(
                                 id=f"prior.feasible.tp{tp}.gmu{gmu:.2f}",
                                 statement=(
-                                    f"TP={tp} 且 gpu_memory_utilization={gmu:.2f} 时，"
-                                    f"显存预算 {budget / 1024**3:.1f} GiB "
-                                    f"小于权重 {weights / 1024**3:.1f} GiB。"
+                                    f"With TP={tp} and gpu_memory_utilization={gmu:.2f}, "
+                                    f"the memory budget of {budget / 1024**3:.1f} GiB "
+                                    f"is below the weight size of {weights / 1024**3:.1f} GiB."
                                 ),
                                 implication=(
-                                    "这一组合没有空间放 KV cache，引擎必然在启动阶段失败，"
-                                    "不应作为候选。"
+                                    "This configuration leaves no space for the KV cache and cannot launch; "
+                                    "it should not be proposed."
                                 ),
-                                source="由 prior.model.weight_bytes 与实测显存预算推导",
+                                source="Derived from prior.model.weight_bytes and the measured memory budget",
                                 grade="derived",
                             )
                         )
@@ -250,12 +250,12 @@ def workload_facts(history: Iterable[Any]) -> list[PriorFact]:
                 PriorFact(
                     id="prior.observed.request_count",
                     statement=(
-                        f"本 Campaign {len(succeeded)} 次成功 Trial 中，单次请求数 "
-                        f"介于 {min(requests):.0f} 与 {max(requests):.0f}。"
+                        f"Across {len(succeeded)} successful campaign trials, request counts "
+                        f"range from {min(requests):.0f} to {max(requests):.0f}."
                     ),
                     implication=(
-                        "上层任务发出的请求量是有限的；提高并发上限不会增加工作负载，"
-                        "只会改变调度形态。"
+                        "The workload issues a finite number of requests; raising concurrency does not add work, "
+                        "it only changes scheduling."
                     ),
                     source="Real trials completed in this campaign",
                     grade="measured",
@@ -268,12 +268,12 @@ def workload_facts(history: Iterable[Any]) -> list[PriorFact]:
                 PriorFact(
                     id="prior.observed.time_split",
                     statement=(
-                        f"平均部署耗时 {mean_deploy:.0f} s，平均任务耗时 {mean_task:.0f} s，"
-                        f"部署占 {(mean_deploy / (mean_deploy + mean_task)) * 100:.0f}%。"
+                        f"Mean deployment time is {mean_deploy:.0f} s and mean task time is {mean_task:.0f} s; "
+                        f"deployment accounts for {(mean_deploy / (mean_deploy + mean_task)) * 100:.0f}%."
                     ),
                     implication=(
-                        "目标函数同时包含这两段。部署时间主要由权重加载决定，"
-                        "任务时间由引擎配置与调度决定；优化其中一段不应恶化另一段。"
+                        "The objective includes both components. Weight loading contributes to deployment time, "
+                        "while engine configuration and scheduling affect task time; improving one should not degrade the other."
                     ),
                     source="Real trials completed in this campaign",
                     grade="measured",
@@ -297,13 +297,13 @@ def failure_facts(history: Iterable[Any]) -> list[PriorFact]:
             PriorFact(
                 id=f"prior.failure.{failure_type.lower()}",
                 statement=(
-                    f"{len(items)} 次 Trial 以 {failure_type} 结束，"
-                    f"例如 {json.dumps(sample, ensure_ascii=False)}。"
+                    f"{len(items)} trials ended with {failure_type}; "
+                    f"for example, {json.dumps(sample, ensure_ascii=False)}."
                 ),
                 implication=(
-                    "失败集中在这些配置上。除非有明确理由，否则不要重复相近的组合。"
+                    "Failures concentrate in these configurations; avoid similar configurations unless evidence justifies retrying."
                     if failure_type.startswith("FAILED_VLLM") or failure_type == "FAILED_GPU"
-                    else "这类失败可能与配置无关；先确认是候选问题还是环境问题。"
+                    else "These failures may be unrelated to configuration; distinguish candidate failures from environment failures first."
                 ),
                 source="Real trials completed in this campaign",
                 grade="measured",
@@ -332,8 +332,8 @@ def build_prior_knowledge(
     ]
     return {
         "note": (
-            "以下事实用于缩小搜索范围，仅供参考，不构成硬性过滤。"
-            "measured 来自本机实测，derived 由实测值推导。"
+            "The following facts guide search and are advisory rather than hard filters. "
+            "Measured facts come from this machine; derived facts are computed from measurements."
         ),
         "facts": [fact.as_dict() for fact in facts],
     }

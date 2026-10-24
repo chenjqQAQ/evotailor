@@ -5,7 +5,7 @@ from typing import Any
 
 from evotailor.contracts import Phase, TrialResult
 
-SYSTEM_PROMPT = """You plan the search phases for exactly one EvoTailor Episode. Choose one phase for every Trial in the Episode from: modeling, mixed, local, validation. Use modeling to improve broad search-space understanding, mixed to balance exploration and exploitation, local to refine the incumbent, and validation to repeat/check the best configuration. Read learning_context for explicit source observations and retrieved experience; source observations do not consume target budget. Do not claim cold start when compatible source measurements exist. For short budgets use only enough modeling to resolve key unknowns, then exploit evidence. Base the allocation on observed evidence, remaining budget, calibration maturity, and proposer coverage. The first-ever Trial must be modeling. Only use allowed_phases. When require_final_validation is true and total_trials is greater than one, the final Episode must include at least one validation Trial. Episode length is an upper bound: a boundary agent can close it earlier; unused phases are discarded. Return JSON with phase_plan, rationale, evidence, and risks. phase_plan must have exactly the requested number of items. evidence and risks must be arrays of complete sentences. Keep phase values in English. Write rationale, evidence, and risks in Simplified Chinese."""
+SYSTEM_PROMPT = """You plan the search phases for exactly one EvoTailor Episode. Choose one phase for every Trial in the Episode from: modeling, mixed, local, validation. Use modeling to improve broad search-space understanding, mixed to balance exploration and exploitation, local to refine the incumbent, and validation to repeat/check the best configuration. Read learning_context for explicit source observations and retrieved experience; source observations do not consume target budget. Do not claim cold start when compatible source measurements exist. For short budgets use only enough modeling to resolve key unknowns, then exploit evidence. Base the allocation on observed evidence, remaining budget, calibration maturity, and proposer coverage. The first-ever Trial must be modeling. Only use allowed_phases. When require_final_validation is true and total_trials is greater than one, the final Episode must include at least one validation Trial. Episode length is an upper bound: a boundary agent can close it earlier; unused phases are discarded. Return JSON with phase_plan, rationale, evidence, and risks. phase_plan must have exactly the requested number of items. evidence and risks must be arrays of complete sentences. Keep phase values in English. Write rationale, evidence, and risks in English."""
 
 
 class EpisodePlannerAgent:
@@ -30,9 +30,9 @@ class EpisodePlannerAgent:
     ) -> dict[str, Any]:
         fallback = {
             "phase_plan": [item.value for item in deterministic_plan],
-            "rationale": "Backing model未参与，使用当前确定性阶段策略。",
+            "rationale": "No model was used; retaining the deterministic phase policy.",
             "evidence": [],
-            "risks": ["阶段分配没有使用 Agent 判断。"],
+            "risks": ["Phase allocation did not use an agent decision."],
             "used_fallback": True,
         }
         if not use_llm or self.client is None:
@@ -93,11 +93,11 @@ class EpisodePlannerAgent:
 
             return {
                 "phase_plan": [item.value for item in phases],
-                "rationale": str(answer.get("rationale", "Agent 已生成阶段计划。")),
+                "rationale": str(answer.get("rationale", "The agent generated the phase plan.")),
                 "evidence": text_list(answer.get("evidence")),
                 "risks": text_list(answer.get("risks")),
                 "used_fallback": False,
             }
         except Exception as exc:
-            fallback["rationale"] = f"阶段规划 Agent 调用失败：{type(exc).__name__}: {exc}"
+            fallback["rationale"] = f"Phase-planning agent call failed: {type(exc).__name__}: {exc}"
             return fallback

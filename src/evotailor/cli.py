@@ -154,8 +154,8 @@ def run(
         server.start()
         typer.echo("\n" + "═" * 78)
         typer.echo(f"Live dashboard started at http://127.0.0.1:{server.port}")
-        typer.echo("如果通过远程开发环境访问，请转发或打开上述端口。")
-        typer.echo("面板会在本次运行结束时自动关闭。")
+        typer.echo("Forward or open the port above when using a remote development environment.")
+        typer.echo("The dashboard closes automatically when this run finishes.")
         typer.echo("═" * 78 + "\n")
     try:
         bootstrap_trace = ConsoleTrace(run_dir, spec.console_progress)
@@ -185,8 +185,8 @@ def run(
                     )
                 bootstrap_trace.emit(
                     "Project inspection",
-                    "正在分析上层任务代码、硬件和当前 vLLM 能力。",
-                    任务目录=str(task_root.resolve()),
+                    "Inspecting workload code, hardware, and current vLLM capabilities.",
+                    task_root=str(task_root.resolve()),
                 )
                 runtime_path = os.environ.get("EVOTAILOR_RUNTIME_CONFIG")
                 runtime = yaml.safe_load(Path(runtime_path).read_text()) if runtime_path else {}
@@ -217,8 +217,8 @@ def run(
                 if probe is None:
                     bootstrap_trace.emit(
                         "Search space construction",
-                        "未配置真实部署模型路径，Added dimensions只能核对 flag 是否被列出，"
-                        "无法确认它在本平台真的能启动。",
+                        "No served-model path is configured; added dimensions can only be checked against the listed flags. "
+                        "Their ability to launch on this platform has not been verified.",
                     )
                 prepared, derived_arguments, dropped = ensure_passable(
                     prepared,
@@ -232,9 +232,9 @@ def run(
                 if derived_arguments or dropped:
                     bootstrap_trace.emit(
                         "Search space construction",
-                        "已记录Added dimensions的参数映射与真实Launch check证据。",
-                        自动推导的映射=derived_arguments,
-                        已丢弃的维度=dropped,
+                        "Recorded argument mappings and real launch-check evidence for the added dimensions.",
+                        derived_arguments=derived_arguments,
+                        dropped_dimensions=dropped,
                     )
                 derived_path.write_text(
                     json.dumps(derived_arguments, indent=2, ensure_ascii=False) + "\n"
@@ -249,14 +249,14 @@ def run(
             vllm = discovery_payload.get("vllm") or {}
             bootstrap_trace.emit(
                 "Project features",
-                "已完成运行前Project inspection。",
-                Agent summary (natural language)=decision.get("project_summary", []),
-                扫描文件数=task.get("file_count_sampled"),
-                可能的启动入口=(task.get("entrypoint_candidates") or [])[:8],
-                CPU核心数=hardware.get("cpu_count"),
-                GPU信息=(hardware.get("gpus") or {}).get("stdout", "unavailable").strip(),
-                vLLM版本=(vllm.get("version") or {}).get("stdout", "unavailable").strip(),
-                支持的vLLM参数数=len(vllm.get("supported_flags") or []),
+                "Completed project inspection before the run.",
+                agent_summary_natural_language=decision.get("project_summary", []),
+                sampled_file_count=task.get("file_count_sampled"),
+                entrypoint_candidates=(task.get("entrypoint_candidates") or [])[:8],
+                cpu_count=hardware.get("cpu_count"),
+                gpu_info=(hardware.get("gpus") or {}).get("stdout", "unavailable").strip(),
+                vllm_version=(vllm.get("version") or {}).get("stdout", "unavailable").strip(),
+                supported_flag_count=len(vllm.get("supported_flags") or []),
             )
             base_path = Path(spec.search_space)
             if not base_path.is_absolute():
@@ -265,13 +265,13 @@ def run(
             added = sorted(set(prepared.dimensions) - set(base.dimensions))
             bootstrap_trace.emit(
                 "Search space construction",
-                "Agent 已在 Trial 0 之前完成搜索空间决策，之后将保持冻结。",
-                Base dimension count=len(base.dimensions),
-                Final dimension count=len(prepared.dimensions),
-                Added dimensions=added,
-                是否复用已有决策=reused,
-                Decision rationale=decision.get("rationale"),
-                证据=decision.get("evidence", []),
+                "The agent finalized the search space before Trial 0; it remains frozen during the campaign.",
+                base_dimension_count=len(base.dimensions),
+                final_dimension_count=len(prepared.dimensions),
+                added_dimensions=added,
+                reused_decision=reused,
+                decision_rationale=decision.get("rationale"),
+                evidence=decision.get("evidence", []),
             )
             spec = spec.model_copy(
                 update={
@@ -286,15 +286,15 @@ def run(
             base = SearchSpace.load(space_path)
             bootstrap_trace.emit(
                 "Project inspection",
-                "本次运行没有提供 --task-root，因此未执行上层任务代码与硬件探查。",
-                如何启用="运行时增加 --task-root /上层任务代码目录",
+                "No --task-root was supplied; workload-code and hardware discovery were skipped.",
+                enable_hint="Add --task-root /path/to/workload to the command.",
             )
             bootstrap_trace.emit(
                 "Search space construction",
-                "本次直接使用基础搜索空间，没有调用 Agent 增加维度。",
-                Base dimension count=len(base.dimensions),
-                Final dimension count=len(base.dimensions),
-                Added dimensions=[],
+                "Using the base search space without agent-added dimensions.",
+                base_dimension_count=len(base.dimensions),
+                final_dimension_count=len(base.dimensions),
+                added_dimensions=[],
             )
         if spec.execution_backend != ExecutionBackend.SIMULATED:
             check = run_preflight(spec, project_root)
@@ -305,12 +305,12 @@ def run(
             summary = CampaignRunner(spec, project_root).run()
         except Exception as exc:
             bootstrap_trace.emit(
-                "Task launch失败",
-                "Campaign 在进入 Trial 前失败，面板保留本次失败状态。",
-                错误类型=type(exc).__name__,
-                错误=str(exc),
-                结果目录=str(run_dir),
-                建议="更换 campaign_id 或清理/复用匹配的 frozen_search_space.json 后重新运行。",
+                "Task launch failed",
+                "The campaign failed before starting a trial; the dashboard retains the failure state.",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                run_dir=str(run_dir),
+                suggestion="Use a new campaign_id or restore a matching frozen_search_space.json before rerunning.",
             )
             raise
     finally:
@@ -356,7 +356,7 @@ def replay(
     server = DashboardServer(run_dir, host=dashboard_host, port=dashboard_port, replay=True)
     server.start()
     typer.echo(f"Replay dashboard started at http://127.0.0.1:{server.port}")
-    typer.echo("拖动面板中的回放进度条可查看任意历史步骤；按 Ctrl-C 退出。")
+    typer.echo("Drag the replay slider to inspect historical steps; press Ctrl-C to exit.")
     try:
         import time
 

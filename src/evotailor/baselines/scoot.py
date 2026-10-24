@@ -11,7 +11,6 @@ stage space and budget accounting of the harness:
 """
 from __future__ import annotations
 
-import random
 from typing import Any
 
 from evotailor.baselines.registry import BaselineContext, TrialRecord, register

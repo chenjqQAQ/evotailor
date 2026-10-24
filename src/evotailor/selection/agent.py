@@ -7,14 +7,14 @@ from typing import Any
 from evotailor.context import ContextBuilder
 from evotailor.contracts import Candidate, Phase, Prediction, Selection, TrialResult
 
-SYSTEM_PROMPT = """You are the bounded candidate selector for a configuration-search experiment. Select only a candidate_id present in the input. Treat predictions as uncertain estimates, not facts. A null task prediction means no fitted task estimate exists. The native forward_ms estimate is only compute time, not the task objective. In modeling phase prioritize measured-space coverage and useful comparisons; use historical configurations and failures as evidence. Read each candidate's support block: when support.extrapolated is true the candidate lies farther from every measurement than the measurements lie from each other, its calibrated value is null, and the fitted model has no estimate for it. A null calibrated value is not a low objective and must never be treated as one; in modeling prefer such candidates, because measuring them is the only way the model can learn that region, and a region never measured can never be compared. Do not let a predicted value for a well-sampled candidate veto an unmeasured one. When every candidate is extrapolated the flag no longer separates them, so order them by support.distance_to_nearest and take the largest: that candidate sits farthest from anything measured, which is the region whose measurement teaches the most. Never resolve that tie by falling back to the incumbent, because repeating the neighbourhood already measured is what leaves a region unmeasured. Use discovery workload facts, hardware and vLLM capabilities, the complete search space and experiment budget alongside calibrated objective, uncertainty, diversity, phase objective, and proposer evidence. Read uncertainty_bonus and experiment.search_policy: larger uncertainty_bonus favors information gain, lower favors measured objective. Retrieved experience contains conditional hypotheses, not target measurements; cite source campaign IDs when using it. Use prior_knowledge: each fact carries a statement, an implication, a source and a grade. Prefer candidates the facts support and avoid the regions they warn about, but the facts are advisory and you may select outside them when the other evidence justifies it. Preserve measured/declared/inferred/unavailable evidence grades; missing discovery is not evidence that a workload or hardware fact is false. When experiment.fixed_candidate_pool is true, all supplied sources remain available even if their policy weight is zero; weights affect preference only. Do not invent parameters or candidates. Return JSON with candidate_id, reason, confidence, and risk_factors. Keep candidate IDs, parameter names, numeric values, and evidence references unchanged. Write only the user-facing values of reason and risk_factors in Simplified Chinese."""
+SYSTEM_PROMPT = """You are the bounded candidate selector for a configuration-search experiment. Select only a candidate_id present in the input. Treat predictions as uncertain estimates, not facts. A null task prediction means no fitted task estimate exists. The native forward_ms estimate is only compute time, not the task objective. In modeling phase prioritize measured-space coverage and useful comparisons; use historical configurations and failures as evidence. Read each candidate's support block: when support.extrapolated is true the candidate lies farther from every measurement than the measurements lie from each other, its calibrated value is null, and the fitted model has no estimate for it. A null calibrated value is not a low objective and must never be treated as one; in modeling prefer such candidates, because measuring them is the only way the model can learn that region, and a region never measured can never be compared. Do not let a predicted value for a well-sampled candidate veto an unmeasured one. When every candidate is extrapolated the flag no longer separates them, so order them by support.distance_to_nearest and take the largest: that candidate sits farthest from anything measured, which is the region whose measurement teaches the most. Never resolve that tie by falling back to the incumbent, because repeating the neighbourhood already measured is what leaves a region unmeasured. Use discovery workload facts, hardware and vLLM capabilities, the complete search space and experiment budget alongside calibrated objective, uncertainty, diversity, phase objective, and proposer evidence. Read uncertainty_bonus and experiment.search_policy: larger uncertainty_bonus favors information gain, lower favors measured objective. Retrieved experience contains conditional hypotheses, not target measurements; cite source campaign IDs when using it. Use prior_knowledge: each fact carries a statement, an implication, a source and a grade. Prefer candidates the facts support and avoid the regions they warn about, but the facts are advisory and you may select outside them when the other evidence justifies it. Preserve measured/declared/inferred/unavailable evidence grades; missing discovery is not evidence that a workload or hardware fact is false. When experiment.fixed_candidate_pool is true, all supplied sources remain available even if their policy weight is zero; weights affect preference only. Do not invent parameters or candidates. Return JSON with candidate_id, reason, confidence, and risk_factors. Keep candidate IDs, parameter names, numeric values, and evidence references unchanged. Write only the user-facing values of reason and risk_factors in English."""
 
 
 def _confidence(value: Any) -> float:
     """Read the model's confidence without letting its wording end the Campaign.
 
     The field is an annotation, not the decision: the candidate id is what matters. A
-    model that answers "中等偏低" instead of a number used to raise out of here and kill
+    model that answers "moderately low" instead of a number used to raise out of here and kill
     a run that had already measured Trials, so anything unparsable falls back to the
     neutral default rather than propagating.
     """
@@ -83,7 +83,7 @@ class SelectorAgent:
                     raise ValueError("model selected an unknown candidate")
                 return Selection(
                     candidate_id=chosen,
-                    reason=str(answer.get("reason") or "模型已完成候选选择。"),
+                    reason=str(answer.get("reason") or "The model selected a candidate."),
                     confidence=_confidence(answer.get("confidence")),
                     risk_factors=_risk_factors(answer.get("risk_factors")),
                 )
@@ -133,8 +133,8 @@ class SelectorAgent:
         )
         return Selection(
             candidate_id=chosen.candidate_id,
-            reason=reason + " 已根据校准预测值和Uncertainty分数选择候选。",
+            reason=reason + " Selected a candidate using calibrated predictions and uncertainty scores.",
             confidence=0.45,
-            risk_factors=["本轮使用了确定性数值选择器，没有采用Backing model的判断。"],
+            risk_factors=["This trial used the deterministic numerical selector rather than a model decision."],
             used_fallback=True,
         )

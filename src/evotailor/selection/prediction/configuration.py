@@ -63,7 +63,7 @@ def support_report(space: dict, parameters: dict, samples: list[dict]) -> dict:
             "distance_to_nearest": None,
             "measured_spread": None,
             "out_of_range_dimensions": [],
-            "reason": "还没有任何已测量样本，任何候选都尚未被覆盖。",
+            "reason": "No measured samples exist; all candidates are outside measured coverage.",
         }
     names, x = encode(space, parameters)
     # Which dimensions step outside the values actually measured for them. This is
@@ -77,9 +77,9 @@ def support_report(space: dict, parameters: dict, samples: list[dict]) -> dict:
         if spec["kind"] in ("integer", "float"):
             low, high = min(seen), max(seen)
             if value < low or value > high:
-                out_of_range.append(f"{name}={value} (已测量范围 {low}–{high})")
+                out_of_range.append(f"{name}={value} (measured range {low}–{high})")
         elif value not in seen:
-            out_of_range.append(f"{name}={value} (已测量 {sorted(set(seen))})")
+            out_of_range.append(f"{name}={value} (measured values {sorted(set(seen))})")
     rows = [encode(space, s["candidate_parameters"])[1] for s in samples]
     width = max(len(x), 1)
     nearest = min(float(((x - row) ** 2).sum() / width) for row in rows)
@@ -100,11 +100,11 @@ def support_report(space: dict, parameters: dict, samples: list[dict]) -> dict:
         "measured_spread": round(spread, 6),
         "out_of_range_dimensions": out_of_range,
         "reason": (
-            "该候选与已测量配置的距离超过测量点之间的最大间距，"
-            "或在某些维度上超出了已测量的取值，预测值属于外推而非估计，"
-            "不能作为否决它的依据。"
+            "The candidate is farther from measured configurations than their maximum pairwise distance, "
+            "or exceeds measured values in some dimensions. Its prediction is an extrapolation, "
+            "which alone is not grounds for rejecting it."
             if extrapolated
-            else "该候选落在已测量区域内部。"
+            else "The candidate lies within the measured region."
         ),
     }
 

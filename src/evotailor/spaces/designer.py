@@ -13,7 +13,7 @@ The payload carries workload_evidence: a map of fact ids to facts measured from 
 
 For every dimension you add you must return dimension_evidence mapping that dimension's name to exactly one fact id from workload_evidence. A dimension whose citation is missing, or does not name a real fact id, is rejected by the kernel and the whole addition is discarded. Cite the fact that makes the dimension worth tuning: concurrency, context length, arrival shape, or call depth. Do not cite a fact whose grade is unavailable. If no fact justifies an addition, return empty additions and say so in rationale.
 
-Return JSON with project_summary, extra_dimensions, extra_constraints, dimension_evidence, rationale, and evidence. project_summary must contain 3-6 concise Simplified Chinese sentences describing task-code, hardware, and vLLM characteristics relevant to tuning. Write rationale and evidence in Simplified Chinese. Each added dimension must use the schema {kind, choices} or {kind, lower, upper, step}. Do not make any change after trials start."""
+Return JSON with project_summary, extra_dimensions, extra_constraints, dimension_evidence, rationale, and evidence. project_summary must contain 3-6 concise English sentences describing task-code, hardware, and vLLM characteristics relevant to tuning. Write rationale and evidence in English. Each added dimension must use the schema {kind, choices} or {kind, lower, upper, step}. Do not make any change after trials start."""
 
 
 class SpaceDesignAgent:

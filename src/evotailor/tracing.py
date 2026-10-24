@@ -66,23 +66,23 @@ class ConsoleTrace:
     @staticmethod
     def _format_detail(key: str, value: Any) -> list[str]:
         if value is None:
-            return [f"  • {key}：无"]
+            return [f"  • {key}: none"]
         if isinstance(value, list):
             if not value:
-                return [f"  • {key}：无"]
-            lines = [f"  • {key}："]
+                return [f"  • {key}: none"]
+            lines = [f"  • {key}: "]
             for index, item in enumerate(value, 1):
                 if isinstance(item, dict):
                     lines.append(f"      [{index}]")
                     for child_key, child_value in item.items():
-                        lines.append(f"          {child_key}：{child_value}")
+                        lines.append(f"          {child_key}: {child_value}")
                 else:
                     lines.append(f"      - {item}")
             return lines
         if isinstance(value, dict):
-            lines = [f"  • {key}："]
+            lines = [f"  • {key}: "]
             for child_key, child_value in value.items():
                 rendered = json.dumps(child_value, ensure_ascii=False, default=str)
-                lines.append(f"      {child_key}：{rendered}")
+                lines.append(f"      {child_key}: {rendered}")
             return lines
-        return [f"  • {key}：{value}"]
+        return [f"  • {key}: {value}"]
