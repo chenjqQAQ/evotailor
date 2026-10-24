@@ -256,4 +256,6 @@ pytest -q
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Copyright (c) 2026 The EvoTailor Authors.
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full terms.
