@@ -4,13 +4,13 @@ import hashlib
 from pathlib import Path
 
 FILES = (
-    "src/evotailor/portfolio/proposers.py",
-    "src/evotailor/agents/selector.py",
-    "src/evotailor/agents/episode_planner.py",
-    "src/evotailor/prediction/configuration.py",
-    "src/evotailor/policy.py",
-    "tests/test_prediction_support.py",
-    "tests/test_policy.py",
+    "src/evotailor/loops/proposals.py",
+    "src/evotailor/selection/agent.py",
+    "src/evotailor/loops/episode_planner.py",
+    "src/evotailor/selection/prediction/configuration.py",
+    "src/evotailor/loops/policy.py",
+    "tests/test_paper_contracts.py",
+    "tests/test_spaces.py",
 )
 
 

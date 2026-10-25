@@ -46,6 +46,23 @@ class SearchSpace(BaseModel):
     dimensions: dict[str, Dimension]
     global_constraints: list[dict[str, Any]] = Field(default_factory=list)
     safe_baseline: dict[str, Any]
+    fixed_parameters: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_baseline(self) -> SearchSpace:
+        if set(self.fixed_parameters) & set(self.dimensions):
+            raise ValueError("Searched and fixed parameters must be disjoint")
+        issues = self.validate_candidate(self.safe_baseline)
+        if issues:
+            raise ValueError("Invalid safe baseline: " + "; ".join(issues))
+        return self
+
+    def deployment_parameters(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Complete c_t with predetermined defaults outside the searched dimensions."""
+        issues = self.validate_candidate(values)
+        if issues:
+            raise ValueError("; ".join(issues))
+        return self.fixed_parameters | values
 
     @classmethod
     def load(cls, path: Path) -> SearchSpace:
@@ -153,6 +170,7 @@ class SearchSpace(BaseModel):
         for name, dim in self.dimensions.items():
             if values[name] not in dim.values():
                 issues.append(f"{name} is outside its domain")
+        values = self.fixed_parameters | values
         for rule in self.global_constraints:
             if rule.get("kind") == "product_lte":
                 if math.prod(float(values[n]) for n in rule["parameters"]) > float(rule["limit"]):

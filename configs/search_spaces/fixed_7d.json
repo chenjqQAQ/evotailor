@@ -1,0 +1,71 @@
+{
+  "backend": "vllm",
+  "dimensions": {
+    "runtime.gpu_memory_utilization": {
+      "kind": "float",
+      "lower": 0.15,
+      "upper": 0.95,
+      "step": 0.05
+    },
+    "deployment.tensor_parallel_size": {
+      "kind": "choice",
+      "choices": [
+        1,
+        2
+      ]
+    },
+    "runtime.max_num_seqs": {
+      "kind": "integer",
+      "lower": 8,
+      "upper": 256,
+      "step": 8
+    },
+    "runtime.max_model_len": {
+      "kind": "integer",
+      "lower": 12288,
+      "upper": 32768,
+      "step": 2048
+    },
+    "runtime.max_num_batched_tokens": {
+      "kind": "integer",
+      "lower": 4096,
+      "upper": 32768,
+      "step": 2048
+    },
+    "runtime.enable_prefix_caching": {
+      "kind": "choice",
+      "choices": [
+        false,
+        true
+      ]
+    },
+    "runtime.enable_chunked_prefill": {
+      "kind": "choice",
+      "choices": [
+        false,
+        true
+      ]
+    }
+  },
+  "global_constraints": [
+    {
+      "kind": "conditional_gte",
+      "if": {
+        "parameter": "runtime.enable_chunked_prefill",
+        "equals": false
+      },
+      "left": "runtime.max_num_batched_tokens",
+      "right": "runtime.max_model_len",
+      "code": "CHUNKED_PREFILL_BATCH_LIMIT"
+    }
+  ],
+  "safe_baseline": {
+    "runtime.gpu_memory_utilization": 0.55,
+    "deployment.tensor_parallel_size": 1,
+    "runtime.max_num_seqs": 128,
+    "runtime.max_model_len": 22528,
+    "runtime.max_num_batched_tokens": 18432,
+    "runtime.enable_prefix_caching": true,
+    "runtime.enable_chunked_prefill": true
+  }
+}

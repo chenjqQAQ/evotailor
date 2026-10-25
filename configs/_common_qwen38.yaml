@@ -10,7 +10,7 @@ api_key_env: EVOTAILOR_PROPOSER_API_KEY
 # The primary relay rate-limits under load and a rate limit used to end the Campaign.
 # The stand-in serves the same model, and once the primary fails the client stays on
 # the fallback for the rest of the run.
-fallback_base_url: https://api.agent-service.com/v1
+fallback_base_url: ${EVOTAILOR_FALLBACK_BASE_URL}
 fallback_api_key_env: EVOTAILOR_AGENT_API_KEY
 model_timeout_s: 180
 model_retries: 5

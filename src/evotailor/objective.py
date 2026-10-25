@@ -17,22 +17,34 @@ def improvement(value: float, incumbent: float | None, direction: str) -> float:
     return incumbent - value if direction == "minimize" else value - incumbent
 
 
-def best_trial(history: Iterable[TrialResult], direction: str) -> TrialResult | None:
-    valid = [
-        item
-        for item in history
-        if item.status == TrialStatus.SUCCEEDED
-        and item.objective is not None
-        and math.isfinite(item.objective)
-        and not any(
-            item.validity.get(gate) is False
-            for gate in (
-                "workload_completed",
-                "served_model_matches_all_requests",
-                "cleanup_success",
-            )
-        )
-    ]
+def is_valid_trial(item: TrialResult, *, allow_simulated: bool = False) -> bool:
+    """Apply Section 3 validity, including explicit quality and measurement gates."""
+    if item.measurement_kind != "real":
+        return allow_simulated and item.status == TrialStatus.SUCCEEDED and item.objective is not None
+    gates = ("deployment_succeeded", "workload_completed", "quality_passed", "measurement_complete")
+    if any(item.validity.get(gate) is False for gate in ("cleanup_success", "served_model_matches_all_requests")):
+        return False
+    if item.status != TrialStatus.SUCCEEDED or any(item.validity.get(gate) is not True for gate in gates):
+        return False
+    if item.objective is None or not math.isfinite(item.objective):
+        return False
+    try:
+        deploy = item.metrics["deployment_time_s"]
+        task = item.metrics["task_makespan_s"]
+        total = item.metrics["deployment_plus_task_time_s"]
+    except KeyError:
+        return False
+    return (
+        all(math.isfinite(value) and value >= 0 for value in (deploy, task, total))
+        and math.isclose(total, deploy + task, rel_tol=1e-8, abs_tol=1e-6)
+        and math.isclose(item.objective, total, rel_tol=1e-8, abs_tol=1e-6)
+    )
+
+
+def best_trial(
+    history: Iterable[TrialResult], direction: str = "minimize", *, allow_simulated: bool = False
+) -> TrialResult | None:
+    valid = [item for item in history if is_valid_trial(item, allow_simulated=allow_simulated)]
     if not valid:
         return None
     chooser = min if direction == "minimize" else max
@@ -40,28 +52,15 @@ def best_trial(history: Iterable[TrialResult], direction: str) -> TrialResult | 
 
 
 def valid_rate(history: Iterable[TrialResult]) -> float:
-    """Valid-evaluation rate eta_n (paper §3).
+    """Section 3: valid real evaluations divided by all real evaluations, including failures."""
+    items = [item for item in history if item.measurement_kind == "real"]
+    return sum(is_valid_trial(item) for item in items) / len(items) if items else 0.0
 
-    The denominator is the number of *initiated deployments*, including failed ones, so a
-    method that crashes often is penalised even when its best trial looks good.
-    """
-    items = list(history)
-    if not items:
-        return 0.0
-    valid = sum(
-        1
-        for item in items
-        if item.status == TrialStatus.SUCCEEDED
-        and not any(
-            item.validity.get(gate) is False
-            for gate in (
-                "workload_completed",
-                "served_model_matches_all_requests",
-                "cleanup_success",
-            )
-        )
-    )
-    return valid / len(items)
+
+def objective_value(history: Iterable[TrialResult]) -> float:
+    """Equation 2, with positive infinity when no valid real configuration exists."""
+    best = best_trial(history)
+    return float(best.objective) if best is not None else math.inf
 
 
 def best_verified(history: Iterable[TrialResult], direction: str = "minimize") -> float | None:

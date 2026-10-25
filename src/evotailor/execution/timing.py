@@ -12,6 +12,7 @@ loop, by the metric aggregation, and by offline analysis of a campaign database.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
@@ -25,7 +26,7 @@ class TimingBreakdown:
     finish_ts: float
 
     def __post_init__(self) -> None:
-        if not (self.launch_ts <= self.ready_ts <= self.finish_ts):
+        if not all(math.isfinite(value) for value in (self.launch_ts, self.ready_ts, self.finish_ts)) or not (self.launch_ts <= self.ready_ts <= self.finish_ts):
             raise ValueError(
                 f"non-monotonic timestamps: {self.launch_ts} {self.ready_ts} {self.finish_ts}"
             )

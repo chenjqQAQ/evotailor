@@ -5,15 +5,10 @@ from typing import Any
 
 from evotailor.workloads.discovery.workload import flatten_facts
 from evotailor.spaces.search_space import SearchSpace
-from evotailor.spaces.builder import extend_base_space
+from evotailor.spaces.builder import adapt_space
 
-SYSTEM_PROMPT = """You design an initial configuration-search space before a Campaign starts. You may add any number of well-supported dimensions to the supplied base space. You must never remove, narrow, rename, or redefine a base dimension. Use only flags supported by the discovered vLLM installation.
-
-The payload carries workload_evidence: a map of fact ids to facts measured from the upper task's own code and configuration. Each fact records its value, how it was obtained (grade: measured | declared | inferred | unavailable), and the artifact it came from.
-
-For every dimension you add you must return dimension_evidence mapping that dimension's name to exactly one fact id from workload_evidence. A dimension whose citation is missing, or does not name a real fact id, is rejected by the kernel and the whole addition is discarded. Cite the fact that makes the dimension worth tuning: concurrency, context length, arrival shape, or call depth. Do not cite a fact whose grade is unavailable. If no fact justifies an addition, return empty additions and say so in rationale.
-
-Return JSON with project_summary, extra_dimensions, extra_constraints, dimension_evidence, rationale, and evidence. project_summary must contain 3-6 concise English sentences describing task-code, hardware, and vLLM characteristics relevant to tuning. Write rationale and evidence in English. Each added dimension must use the schema {kind, choices} or {kind, lower, upper, step}. Do not make any change after trials start."""
+SYSTEM_PROMPT = """Construct the search space for the next fixed stage from workload, model, hardware, framework, and reusable experience. Select relevant dimensions and ranges under the evaluation budget. Add uncovered dimensions, narrow unproductive ranges, or remove irrelevant searched dimensions only when a supplied evidence fact supports the decision. Use supported engine parameters. Never change an active stage or completed records. Removed dimensions retain predetermined deployment defaults.
+Return strict JSON with project_summary (English sentences), space_changes ({add, retune, remove, evidence}), rationale, and evidence. Every changed dimension must cite exactly one available workload_evidence fact ID in space_changes.evidence. Dimension schemas use kind=choice with choices, or kind=integer/float with lower, upper, step. No evidence means no change. Keep parameter names and evidence IDs unchanged. Write all explanations in English."""
 
 
 class SpaceDesignAgent:
@@ -54,20 +49,13 @@ class SpaceDesignAgent:
                 answer[key] = [str(value)]
             else:
                 answer[key] = [str(item) for item in value]
-        extra = answer.get("extra_dimensions") or {}
-        constraints = answer.get("extra_constraints") or []
-        if not isinstance(extra, dict):
-            raise ValueError("space designer returned invalid extra_dimensions")
-        if not isinstance(constraints, list):
-            raise ValueError("space designer returned invalid constraints")
-        citations = self._citations(answer.get("dimension_evidence"), extra)
-        extended = extend_base_space(
-            base,
-            extra,
-            constraints,
-            dimension_evidence=citations,
-            available_evidence={k for k, v in evidence.items() if v.get("grade") != "unavailable"},
-        )
+        changes = answer.get("space_changes") or {
+            "add": answer.get("extra_dimensions") or {},
+            "evidence": answer.get("dimension_evidence") or {},
+        }
+        available = {k for k, v in evidence.items() if v.get("grade") != "unavailable"}
+        extended = adapt_space(base, changes, available_evidence=available)
+        citations = changes.get("evidence") or {}
         answer["dimension_evidence"] = citations
         answer["cited_facts"] = {
             name: {

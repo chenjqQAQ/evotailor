@@ -8,9 +8,7 @@ scenarios:
     description: Prisoner's dilemma interaction among agents.
     trace: ${EVOTAILOR_DATA_ROOT}/traces/pd/workload.json
     operations: 271
-    window_operations: 1040
-    agents: 8
-    peak_concurrency: 4
+    request_counts: {vllm: 271, musa_vllm: 1040, sglang: 1040}
     model: ${EVOTAILOR_MODEL_ROOT}/Qwen3-4B
     model_name: Qwen3-4B
     frameworks: [vllm, sglang, musa_vllm]
@@ -20,9 +18,7 @@ scenarios:
     description: Public-goods game with contribution decisions.
     trace: ${EVOTAILOR_DATA_ROOT}/traces/pg/workload.json
     operations: 255
-    window_operations: 1016
-    agents: 8
-    peak_concurrency: 5
+    request_counts: {vllm: 255, musa_vllm: 255, sglang: 1016}
     model: ${EVOTAILOR_MODEL_ROOT}/Qwen3-4B
     model_name: Qwen3-4B
     frameworks: [vllm, sglang, musa_vllm]
@@ -32,16 +28,14 @@ scenarios:
     description: Social-media simulation with information processing.
     trace: ${EVOTAILOR_DATA_ROOT}/traces/sm/workload.json
     operations: 263
-    window_operations: 1670
-    agents: 8
-    peak_concurrency: 5
+    request_counts: {vllm: 263, musa_vllm: 263, sglang: 1670}
     model: ${EVOTAILOR_MODEL_ROOT}/Qwen3-4B
     model_name: Qwen3-4B
     frameworks: [vllm, sglang, musa_vllm]
     objective: e2e
   ComfyBench:
     workload: comfybench_sample4
-    description: Four agent-generated ComfyUI workflows (generate/edit/extend/upscale).
+    description: Four ComfyBench sample4 tasks, including planning, execution, and external quality assessment.
     trace: ${EVOTAILOR_DATA_ROOT}/tasks/comfybench/sample4.json
     tasks: 4
     model: ${EVOTAILOR_MODEL_ROOT}/Qwen3.8-27B

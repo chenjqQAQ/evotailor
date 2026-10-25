@@ -37,14 +37,14 @@ Read the experience record. Check measurement_kinds first: simulated observation
 
 Return JSON with exactly these keys:
   summary: 3-8 concise English sentences on what this Campaign showed.
-  space_changes: {"add": {name: {kind, choices} or {kind, lower, upper, step}}, "retune": {name: dimension}, "remove": [name], "evidence": {name: fact_id}}. A dimension may only be added or retuned when you cite a workload fact id from the experience record. The search space may only expand: no existing dimension may be removed or lose any of its existing values. Retuning may expand its domain only.
+  space_changes: {"add": {name: {kind, choices} or {kind, lower, upper, step}}, "retune": {name: dimension}, "remove": [name], "evidence": {name: fact_id}}. A dimension change must cite an existing workload fact or evidence.dimension_effects.<dimension> entry from the experience record. At this stage boundary, add uncovered dimensions, narrow unproductive ranges, or remove irrelevant searched dimensions when the recorded evidence supports the change. Every change must cite an existing evidence fact. Removed dimensions retain predetermined deployment defaults. Never mutate the completed stage or relabel its observations as equivalent data for a changed space.
   policy_changes: only fields in policy_parameter_scope.active_fields, using policy_limits and policy_schema. There is no per-Episode step cap here, but the absolute domains still apply. All proposer weights must be in [0,1], and target only configured_proposers. Never tune coverage or neighborhood parameters when those sources are not configured.
-  Each dimension kind must be exactly choice, integer, or float. For choices (including booleans) use {"kind":"choice","choices":[...]}. The word categorical is not a valid kind. Use dimension_schema, and preserve all existing domain values.
+  Each dimension kind must be exactly choice, integer, or float. For choices (including booleans) use {"kind":"choice","choices":[...]}. The word categorical is not a valid kind. Use dimension_schema, and keep the task protocol and parameter meanings explicit.
   objective_changes: {"metric": ..., "direction": ..., "note": ...} describing a change to what is measured. This is recorded but not applied automatically, because it would make the new Campaign incomparable with the old one.
-  code_proposals: a list of {"path", "rationale", "expected_effect", "patch"}, where patch is a unified diff that applies with `git apply` from the repository root. Patches touching src/evotailor/preflight.py, scripts/trial_wrapper.py, or scripts/vllm_fpm_sitecustomize/sitecustomize.py are refused. Every patch is applied to a clean tree and must pass the full test suite, or it is reversed.
+  code_proposals: a list of {"path", "rationale", "expected_effect", "patch"}, where patch is a unified diff that applies with `git apply` from the repository root. Patches touching the root-trust paths in src/evotailor/experience/guard.py are refused. Every patch is applied to a clean tree and must pass the full test suite, or it is reversed.
   no_change_reason: English explanation when you propose nothing.
 
-Keep IDs, parameter names, numeric values, and file paths unchanged. Write the user-facing text in the operator's configured language."""
+Keep IDs, parameter names, numeric values, and file paths unchanged. Write all explanations in English."""
 
 
 class CampaignReviewAgent:

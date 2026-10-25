@@ -88,6 +88,10 @@ class TrialResult(BaseModel):
     error: str | None = None
     failure_type: str | None = None
     measurement_kind: str = "real"
+    stage_id: str = ""
+    space_hash: str = ""
+    code_version: str = ""
+    resource_snapshot: dict[str, Any] = Field(default_factory=dict)
     validity: dict[str, Any] = Field(default_factory=dict)
     started_at: datetime = Field(default_factory=utc_now)
     finished_at: datetime = Field(default_factory=utc_now)
@@ -115,7 +119,7 @@ class CampaignConfig(BaseModel):
     episode_max_trials: int = Field(default=15, ge=1)
     episode_min_count: int = Field(default=3, ge=1)
     episode_max_count: int = Field(default=6, ge=1)
-    final_validation_trials: int = Field(default=2, ge=0)
+    final_validation_trials: int = Field(default=0, ge=0)
     #: Repeats per arm of the post-Campaign validation. These Trials measure the
     #: winning configuration and are deliberately outside the search budget,
     #: because their job is to verify the result rather than to search.
@@ -124,7 +128,7 @@ class CampaignConfig(BaseModel):
     #: Campaign's winner and "baseline" is the frozen safe baseline.
     final_validation_arms: list[str] = Field(default_factory=lambda: ["best", "baseline"])
     seed: int = 42
-    objective_direction: str = "maximize"
+    objective_direction: str = "minimize"
     search_space: str = "configs/search_spaces/common_v2.json"
     run_root: str = "runs"
     baseline_proposer: str = "tpe"
@@ -171,7 +175,7 @@ class CampaignConfig(BaseModel):
     #: Refuse a candidate whose weights cannot fit the memory the configuration
     #: reserves, without spending search budget on it. Portfolio mode only, because
     #: the baselines must search the same space without help.
-    enforce_weight_memory_feasibility: bool = False
+    enforce_weight_memory_feasibility: bool = True
     #: Run the upper-layer workload inside the serving container so both compete for
     #: the same frozen CPU, memory and pid budget. False keeps it on the host.
     workload_in_container: bool = False
@@ -183,7 +187,7 @@ class CampaignConfig(BaseModel):
     console_progress: bool = True
     #: Name of the objective the runtime actually reports, carried into the
     #: Campaign review so a change to it can be described precisely.
-    objective_metric: str = "trial_validity_score"
+    objective_metric: str = "deployment_plus_task_time_s"
     #: Run the post-Campaign review and apply its plan without human review.
     auto_apply_evolution: bool = False
     #: Where the next-Campaign artifacts live. Defaults to ``<run_dir>/evolution``.
@@ -218,6 +222,10 @@ class CampaignConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode(self) -> CampaignConfig:
+        if self.auto_promote_policy:
+            raise ValueError("Apply policy changes at the next stage boundary, not within an active stage")
+        if self.objective_metric != "deployment_plus_task_time_s" or self.objective_direction != "minimize":
+            raise ValueError("The paper objective is deployment_plus_task_time_s, minimized")
         if self.history_mode not in {"cold", "warm", "transfer"}:
             raise ValueError("history_mode must be cold, warm or transfer")
         if self.experience_transfer_mode not in {"cold", "direct", "v2"}:

@@ -9,7 +9,7 @@ from evotailor.experiment import atomic_json
 
 #: Proposers the kernel can ask for a candidate. A weight of zero means the
 #: proposer is not asked at all, which is a hard, observable effect.
-PROPOSER_NAMES = frozenset({"tpe", "slo_guard", "scoot", "coverage", "neighborhood", "llm"})
+PROPOSER_NAMES = frozenset({"tpe", "slo_guard", "scoot", "coverage", "neighborhood", "llm", "llm_tuna"})
 
 #: Tolerance for the per-Episode step limit. A patch that sits exactly on the
 #: limit must be accepted, and binary floating point puts e.g. |0.85 - 0.90| a

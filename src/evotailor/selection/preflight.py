@@ -210,7 +210,7 @@ def _docker_runtime_checks(
     if not runtime_payload.get("health_url"):
         issues.append("runtime config requires health_url so readiness can be awaited")
 
-    if runtime_payload.get("telemetry", {}).get("require_forward_pass_metrics") and (
+    if runtime_payload.get("telemetry", {}).get("require_forward_pass_metrics") and not runtime_payload.get("telemetry", {}).get("forward_metrics_from_workload") and (
         "{fpm_output_path}" not in service_text or "{instrumentation_path}" not in service_text
     ):
         issues.append(
@@ -305,7 +305,7 @@ def _runtime_checks(
         _docker_runtime_checks(runtime_payload, root, issues, warnings)
 
     telemetry = runtime_payload.get("telemetry") or {}
-    if not telemetry.get("collect_vllm_fpm", False):
+    if not telemetry.get("collect_vllm_fpm", False) and not telemetry.get("forward_metrics_from_workload", False):
         warnings.append(
             "real runtime does not enable telemetry.collect_vllm_fpm; "
             "AIConfigurator native calibration will receive no automatic FPM data"

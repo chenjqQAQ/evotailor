@@ -5,6 +5,7 @@ import json
 import os
 import random
 import statistics
+import subprocess
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -47,9 +48,9 @@ from evotailor.loops.history import (
     retrieve_experience,
 )
 from evotailor.loops.history_search import seed_candidate, source_reference
-from evotailor.selection.resources import CampaignResourceLease
+from evotailor.selection.resources import CampaignResourceLease, capture_resource_snapshot
 from evotailor.llm import client_from_config
-from evotailor.objective import best_trial, improvement
+from evotailor.objective import best_trial, improvement, valid_rate
 from evotailor.experiment.parameter_experiments import next_candidate, schedule
 from evotailor.loops.policy import PolicyManager
 from evotailor.loops.proposals_llm import LLMProposalError, LLMProposer
@@ -75,6 +76,7 @@ PROPOSER_LABELS = {
     "tpe": "Optuna TPE",
     "slo_guard": "SLO-Guard",
     "scoot": "SCOOT/HEBO",
+    "llm_tuna": "LLM-Tuna",
     "coverage": "Space coverage",
     "neighborhood": "Neighbourhood search around the incumbent",
     "llm": "LLM next-trial proposal",
@@ -86,6 +88,7 @@ PROPOSER_ACTIONS = {
     "tpe": "Fit a TPE model to previous trials and propose a candidate",
     "slo_guard": "Request a candidate from SLO-Guard",
     "scoot": "Request a candidate from SCOOT/HEBO",
+    "llm_tuna": "Request a candidate from LLM-Tuna",
     "coverage": "Find the candidate with the largest coverage distance in the frozen space",
     "neighborhood": "Search for feasible candidates near the incumbent",
     "llm": "Propose a test configuration using history, workload, hardware, phase, and search-space evidence",
@@ -110,6 +113,8 @@ class CampaignRunner:
     def __init__(self, config: CampaignConfig, project_root: Path) -> None:
         self.config = config
         self.root = project_root
+        revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project_root, capture_output=True, text=True, check=False)
+        self.code_version = revision.stdout.strip() if revision.returncode == 0 else "unversioned"
         self.run_dir = project_root / config.run_root / config.campaign_id
         self.run_dir.mkdir(parents=True, exist_ok=True)
         # The evolution root must be shared across Campaigns, not scoped to this
@@ -207,7 +212,7 @@ class CampaignRunner:
         self.proposers = default_proposers(
             direction=config.objective_direction,
             max_trials=config.max_trials,
-            mature_optimizer_root=Path(config.mature_optimizer_root),
+            mature_optimizer_root=(self.root / Path(config.mature_optimizer_root)).resolve(),
             policies=config.mature_optimizer_policies,
         )
         self.reputation = ReputationTracker()
@@ -242,6 +247,7 @@ class CampaignRunner:
         self.episode_boundary = EpisodeBoundaryAgent(client)
         self.executor = self._executor()
         #: (weights, per-GPU memory, GPU count) read once from the frozen runtime.
+        self._live_resources: dict[str, Any] = {}
         self._feasibility_facts: tuple[int | None, int | None, int | None] | None = None
 
     def _learning_history(self, history):
@@ -348,6 +354,7 @@ class CampaignRunner:
             self.root,
             {
                 "EVOTAILOR_CAMPAIGN_ID": self.config.campaign_id,
+                "EVOTAILOR_FIXED_PARAMETERS": json.dumps(self.space.fixed_parameters),
                 "EVOTAILOR_EXTRA_PARAMETER_ARGUMENTS": json.dumps(
                     self._derived_parameter_arguments()
                 ),
@@ -358,13 +365,11 @@ class CampaignRunner:
         ratio = index / self.config.max_trials
         if self.config.history_guided_search and self.source_records and index > 0:
             return Phase.MIXED if ratio < 0.75 else Phase.LOCAL
-        modeling_end, mixed_end, local_end = self.policy_manager.current.phase_boundaries
+        modeling_end, mixed_end = self.policy_manager.current.phase_boundaries
         if ratio < modeling_end:
             return Phase.MODELING
         if ratio < mixed_end:
             return Phase.MIXED
-        if ratio < local_end:
-            return Phase.LOCAL
         return Phase.LOCAL
 
     def _phases_by_trial(self) -> dict[str, str]:
@@ -453,7 +458,7 @@ class CampaignRunner:
         return payload
 
     def _best(self, history: list[TrialResult]) -> TrialResult | None:
-        return best_trial(history, self.config.objective_direction)
+        return best_trial(history, self.config.objective_direction, allow_simulated=self.config.execution_backend == ExecutionBackend.SIMULATED)
 
     def _rng(self, trial_index: int, proposer: str, attempt: int) -> random.Random:
         material = f"{self.config.seed}:{trial_index}:{proposer}:{attempt}".encode()
@@ -847,6 +852,11 @@ class CampaignRunner:
                     }
                 )
             result = self.executor.execute(trial_id, chosen)
+            result.stage_id = self.config.campaign_id
+            result.space_hash = self.space.digest
+            result.code_version = self.code_version
+            result.resource_snapshot = dict(self._live_resources)
+            result.resource_snapshot["execution_hardware"] = result.telemetry.get("hardware_summary")
             result.telemetry["campaign_id"] = self.config.campaign_id
             result.telemetry["prediction_before_execution"] = prediction.model_dump(mode="json") | {
                 "native_ms": prediction.diagnostics.get("native_ms")
@@ -873,8 +883,11 @@ class CampaignRunner:
         summary = {
             "campaign_id": self.config.campaign_id,
             "completed_trials": len(history),
+            "valid_rate": valid_rate(history),
             "best": None if best is None else best.model_dump(mode="json"),
             "space_hash": self.space.digest,
+            "code_version": self.code_version,
+            "measurement_kind": "simulated" if self.config.execution_backend == ExecutionBackend.SIMULATED else "real",
             "proposer_evidence": self.reputation.snapshot(),
             "learning_context": self._history_context(),
             "recommendation": self._recommendation(history, final_validation),
@@ -935,7 +948,7 @@ class CampaignRunner:
         if not path.is_absolute():
             path = self.root / path
         if not path.is_file():
-            return {"available": False, "reason": "No task discovery artifact was supplied"}
+            return {"available": False, "reason": "No task discovery artifact was supplied", "live_resources": getattr(self, "_live_resources", {})}
         raw = path.read_bytes()
         result = json.loads(raw)
         # All discovered task facts and hardware results are retained. Raw CLI
@@ -949,6 +962,7 @@ class CampaignRunner:
 
         result["artifact"] = {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
         result["available"] = True
+        result["live_resources"] = dict(getattr(self, "_live_resources", {}))
         return result
 
     def _experiment_context(self, history):
@@ -1048,7 +1062,7 @@ class CampaignRunner:
             self._feasibility_facts = (
                 model_weight_bytes(model_path),
                 gpu_memory_bytes(discovery),
-                gpu_count(discovery),
+                gpu_count(discovery, runtime),
             )
         return self._feasibility_facts
 
@@ -1065,14 +1079,20 @@ class CampaignRunner:
             # The baselines must search the same space unaided.
             return list(candidates), []
         weights, memory, count = self._refusal_payload()
+        if self.config.execution_backend != ExecutionBackend.SIMULATED:
+            self._live_resources = capture_resource_snapshot(self._runtime_payload())
+            self.store.append("ResourceSnapshot", self._live_resources)
+            memory = self._live_resources.get("gpu_total_bytes", memory)
+            count = self._live_resources.get("gpu_count", count)
         attemptable: list = []
         refused: list[Infeasible] = []
         for candidate in candidates:
             verdict = weight_memory_verdict(
-                candidate.parameters,
+                self.space.deployment_parameters(candidate.parameters),
                 weights_bytes=weights,
                 gpu_memory_bytes=memory,
                 gpu_count=count,
+                available_memory_bytes=self._live_resources.get("gpu_free_bytes"),
             )
             if verdict is None:
                 attemptable.append(candidate)
@@ -1513,14 +1533,10 @@ class CampaignRunner:
                     or native_feedback.get("recorded_iterations")
                     or 0
                 )
-                result.validity["aic_feedback_accepted"] = accepted_iterations > 0
+                result.telemetry["aic_feedback_accepted"] = accepted_iterations > 0
                 result.telemetry["aic_accepted_iterations"] = accepted_iterations
                 result.telemetry["aic_calibration_context_key"] = native_feedback.get(
                     "calibration_context_key"
-                )
-                gates = [v for k, v in result.validity.items() if k != "trial_validity_score"]
-                result.validity["trial_validity_score"] = (
-                    sum(bool(v) for v in gates) / len(gates) if gates else 0.0
                 )
                 self.store.save_trial(index, result)
                 self.store.append_once("TrialObserved", {"trial_id": result.trial_id}, "trial_id")
@@ -1533,7 +1549,7 @@ class CampaignRunner:
                     fpm_rejection_reason=native_feedback.get("reason"),
                 )
             except Exception as exc:
-                result.validity["aic_feedback_accepted"] = False
+                result.telemetry["aic_feedback_accepted"] = False
                 self.store.save_trial(index, result)
                 self.store.append(
                     "AIConfiguratorObservationFailed",
@@ -1993,6 +2009,8 @@ class CampaignRunner:
             return
 
         available = set(flatten_facts(discovery.get("workload") or {})) if discovery else set()
+        available.update(f"evidence.dimension_effects.{name}" for name in evidence.get("dimension_effects", {}))
+        available.add("evidence.failures")
         applier = EvolutionApplier(
             self.root,
             self.evolution_root,

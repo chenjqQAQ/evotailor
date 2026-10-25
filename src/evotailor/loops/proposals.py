@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import contextlib
 import hashlib
-import importlib
 import json
 import os
 import random
@@ -116,68 +114,6 @@ class NeighborhoodProposer(Proposer):
         )
 
 
-def _legacy_space(space: SearchSpace, root: Path):
-    root_text = str(root)
-    if root_text not in sys.path:
-        sys.path.insert(0, root_text)
-    from evotailor.domain.enums import ApplyMethod, ParameterKind, RedeployLevel
-    from evotailor.domain.search_space import ParameterDimension, SearchSpaceSpec
-
-    dimensions = []
-    for name, dimension in space.dimensions.items():
-        values = dimension.values()
-        if dimension.kind in {"integer", "float"} and dimension.step is not None:
-            # A stepped numeric dimension is a discrete ordered grid, and it is handed over
-            # as one. Passing lower/upper/step instead lets the other side regenerate the
-            # values arithmetically, where 0.3 + 6*0.05 is 0.6000000000000001 rather than
-            # 0.6: a configuration this project considers legal is then rejected there, and
-            # SLO-Guard ended after 14 Trials because its own ask() would not accept an
-            # observed value. Listing the values removes the disagreement entirely.
-            kind = ParameterKind.ORDINAL
-            kwargs = {"choices": list(values)}
-        elif dimension.kind == "integer":
-            kind = ParameterKind.INTEGER
-            kwargs = {
-                "lower": int(dimension.lower),
-                "upper": int(dimension.upper),
-                "step": int(dimension.step or 1),
-            }
-        elif dimension.kind == "float":
-            kind = ParameterKind.FLOAT
-            kwargs = {
-                "lower": float(dimension.lower),
-                "upper": float(dimension.upper),
-                "step": None,
-            }
-        else:
-            if all(isinstance(value, bool) for value in values):
-                kind = ParameterKind.BOOLEAN
-            elif all(
-                isinstance(value, (int, float)) and not isinstance(value, bool) for value in values
-            ):
-                kind = ParameterKind.ORDINAL
-            else:
-                kind = ParameterKind.CATEGORICAL
-            kwargs = {"choices": values}
-        dimensions.append(
-            ParameterDimension(
-                name=name,
-                category=name.split(".", 1)[0],
-                kind=kind,
-                default_value=space.safe_baseline[name],
-                provider=space.backend,
-                apply_method=ApplyMethod.CLI_ARGUMENT,
-                redeploy_level=RedeployLevel.SERVICE_RESTART,
-                supported_backends=[space.backend],
-                **kwargs,
-            )
-        )
-    return SearchSpaceSpec(
-        dimensions=dimensions,
-        global_constraints=space.global_constraints,
-    )
-
-
 def _history_observations(history: list[TrialResult], direction: str) -> list[dict[str, Any]]:
     observations = []
     for item in history:
@@ -275,35 +211,10 @@ class OptunaTPEProposer(Proposer):
         raise RuntimeError("Optuna TPE could not produce a new feasible candidate")
 
 
-@contextlib.contextmanager
-def _isolated_optimizer_environment(name: str):
-    """Prevent V2's Python 3.12 dependency path leaking into legacy workers."""
-    if name != "scoot":
-        yield
-        return
-    saved = {key: os.environ.get(key) for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV")}
-    try:
-        for key in saved:
-            os.environ.pop(key, None)
-        yield
-    finally:
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
 class LegacyOptimizerProposer(Proposer):
     """Thin runtime bridge to the tested SLO-Guard and SCOOT adapters."""
 
-    adapter_names = {
-        "slo_guard": (
-            "evotailor.optimizer_tools.adapters.slo_guard",
-            "SloGuardOptimizer",
-        ),
-        "scoot": ("evotailor.optimizer_tools.adapters.scoot", "ScootOptimizer"),
-    }
+    adapter_names = {name: name for name in ("scoot", "slo_guard", "llm_tuna")}
 
     def __init__(
         self,
@@ -322,47 +233,31 @@ class LegacyOptimizerProposer(Proposer):
         self.policy = policy or {}
 
     def propose(self, space, history, incumbent, phase, rng, policy=None):
-        legacy = _legacy_space(space, self.root)
-        module_name, class_name = self.adapter_names[self.name]
-        optimizer_type = getattr(importlib.import_module(module_name), class_name)
-        policy = {"budget": self.max_trials, "batch_size": 1, **self.policy}
-        optimizer = optimizer_type(**policy)
-        observations = _history_observations(history, self.direction)
-        task_spec = {
-            "search_space": legacy.model_dump(mode="json"),
-            "seed": rng.randrange(2**31),
-            "max_trials": self.max_trials,
-            **policy,
+        import subprocess
+        worker = Path(__file__).resolve().parents[1] / "baselines" / "worker.py"
+        payload = {
+            "method": self.name, "source_root": str(self.root), "budget": self.max_trials,
+            "seed": rng.randrange(2**31), "policy": self.policy,
+            "space": space.model_dump(mode="json"),
+            "history": _history_observations(history, self.direction),
         }
-        try:
-            with _isolated_optimizer_environment(self.name):
-                if self.name == "scoot":
-                    optimizer.initialize(task_spec, history=observations, seed=task_spec["seed"])
-                else:
-                    optimizer.initialize(task_spec, history=(), seed=task_spec["seed"])
-                    if observations:
-                        optimizer.observe(observations)
-                for _ in range(40):
-                    result = optimizer.recommend(1)
-                    if not result.suggestions:
-                        break
-                    suggestion = result.suggestions[0]
-                    try:
-                        values = space.normalize(dict(suggestion.parameters))
-                    except ValueError:
-                        continue
-                    return make_candidate(
-                        self.name,
-                        values,
-                        suggestion.rationale,
-                        implementation=f"upstream_{self.name}",
-                        provenance=dict(suggestion.provenance),
-                        phase=phase.value,
-                    )
-                raise RuntimeError(f"{self.name} produced no new feasible candidate")
-        finally:
-            with contextlib.suppress(Exception):
-                optimizer.finalize()
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"}}
+        completed = subprocess.run(
+            [os.environ.get("EVOTAILOR_BASELINE_PYTHON", sys.executable), str(worker)],
+            input=json.dumps(payload), text=True, capture_output=True, env=environment,
+            timeout=float(self.policy.get("timeout_s", 900)), check=False,
+        )
+        if completed.returncode:
+            raise RuntimeError(f"Upstream {self.name} failed: {completed.stderr[-1500:]}")
+        answer = json.loads(completed.stdout)
+        proposed = answer["parameters"]
+        if any(proposed.get(name) != value for name, value in space.fixed_parameters.items()):
+            raise ValueError("Upstream optimizer changed a fixed deployment default")
+        values = space.normalize({name: proposed[name] for name in space.dimensions})
+        return make_candidate(self.name, values, str(answer.get("rationale", "")),
+                              implementation=answer["implementation"],
+                              provenance=answer.get("provenance", {}), phase=phase.value)
 
 
 def default_proposers(
@@ -373,22 +268,12 @@ def default_proposers(
     policies: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Proposer]:
     policies = policies or {}
+    from evotailor.baselines.registry import build
     return {
         "tpe": OptunaTPEProposer(direction, policies.get("tpe")),
-        "slo_guard": LegacyOptimizerProposer(
-            "slo_guard",
-            mature_optimizer_root,
-            direction,
-            max_trials,
-            policies.get("slo_guard"),
-        ),
-        "scoot": LegacyOptimizerProposer(
-            "scoot",
-            mature_optimizer_root,
-            direction,
-            max_trials,
-            policies.get("scoot"),
-        ),
+        **{name: build(name, root=mature_optimizer_root, direction=direction,
+                       max_trials=max_trials, policy=policies.get(name))
+           for name in ("slo_guard", "scoot", "llm_tuna")},
         "coverage": CoverageProposer(),
         "neighborhood": NeighborhoodProposer(),
     }

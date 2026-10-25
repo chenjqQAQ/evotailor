@@ -66,6 +66,11 @@ class EventStore:
                 "started_at",
                 "finished_at",
                 "measurement_kind",
+                "stage_id",
+                "space_hash",
+                "code_version",
+                "resource_snapshot",
+                "validity",
                 "failure_type",
                 "error",
             )
@@ -73,7 +78,7 @@ class EventStore:
                 getattr(previous, k) != getattr(item, k) for k in immutable
             ):
                 raise ValueError(
-                    "Completed Trial facts are immutable; only evidence annotations may be added"
+                    "Completed trial facts and validity are immutable"
                 )
         self.connection.execute(
             "INSERT OR REPLACE INTO trials(trial_id,trial_index,payload) VALUES(?,?,?)",

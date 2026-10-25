@@ -8,6 +8,7 @@ from typing import Any
 
 from evotailor.selection.prediction.calibration import ResidualCalibrator
 from evotailor.contracts import Candidate, Prediction, TrialResult
+from evotailor.objective import is_valid_trial
 from evotailor.spaces.search_space import SearchSpace
 
 
@@ -143,7 +144,7 @@ class AIConfiguratorAdapter:
         raw = self.raw_by_candidate.get(result.candidate.candidate_id)
         residual_accepted = False
         if (
-            result.status == "succeeded"
+            is_valid_trial(result, allow_simulated=self.allow_proxy)
             and raw is not None
             and result.objective is not None
             and math.isfinite(result.objective)

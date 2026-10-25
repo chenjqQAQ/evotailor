@@ -1,3 +1,4 @@
+quality_required: false  # Set true for workloads with an external quality criterion.
 mode: docker
 working_directory: .
 run_root: runs/production_trials

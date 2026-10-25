@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from evotailor.contracts import TrialResult
+from evotailor.objective import is_valid_trial
 from evotailor.workloads.discovery.workload import flatten_facts
 
 
@@ -57,7 +58,7 @@ def build_experience(
     discovery: dict[str, Any] | None = None,
     final_validation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    observed = [item for item in trials if item.objective is not None]
+    observed = [item for item in trials if is_valid_trial(item)]
     return {
         "campaign_id": campaign_id,
         "measurement_kinds": {
@@ -67,6 +68,8 @@ def build_experience(
         "run_dir": str(run_dir),
         "objective": {"metric": objective_metric, "direction": direction},
         "search_space_hash": space_hash,
+        "trial_records": [item.model_dump(mode="json") for item in trials],
+        "stage_code_versions": sorted({item.code_version for item in trials}),
         "policy_at_end": policy,
         "workload_signature": workload_signature(discovery),
         "trials": {

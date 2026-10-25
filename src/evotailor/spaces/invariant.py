@@ -1,19 +1,10 @@
-"""The S_common invariant: which dimensions every arm is allowed to search.
+"""Optional controlled-space checks for explicitly declared shared-space comparisons.
 
-The experiment compares a portfolio method against baselines. That comparison is
-only meaningful if the arms are searching the same thing, so the rule is stated
-once and enforced before any Campaign starts:
-
-* there is a public space, ``S_common``;
-* every baseline searches exactly ``S_common`` -- no additions, no removals;
-* the portfolio (V2) space is a superset of ``S_common``: it may add dimensions
-  and may not remove, narrow, or redefine a public one;
-* each Campaign freezes its final space and its canonical config hash before
-  Trial 1, and nothing afterwards may change either;
-* growing the space is a new Campaign, never a change inside a running one.
-
-This module only *decides*. It does not silently repair a space, because a
-repaired space is a different experiment from the one that was described.
+This is not a universal paper requirement. Section 4.3 and the space experiment
+permit scenario-adapted spaces with different dimensions and ranges. This gate
+is used only when common_space_path explicitly requests the stricter legacy
+superset/equality control; ordinary adaptive stages leave that field empty.
+Every active stage still freezes its own space hash independently.
 """
 
 from __future__ import annotations

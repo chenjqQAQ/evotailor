@@ -26,7 +26,7 @@ class SimulatedExecutor(Executor):
         space: SearchSpace,
         seed: int = 42,
         noise: float = 0.01,
-        objective_direction: str = "maximize",
+        objective_direction: str = "minimize",
     ) -> None:
         self.space = space
         self.seed = seed
@@ -157,6 +157,9 @@ class CommandExecutor(Executor):
                 raise ValueError("FAILED_WORKLOAD: objective must be finite")
             validity = dict(payload.get("validity") or {})
             required = (
+                "deployment_succeeded",
+                "quality_passed",
+                "measurement_complete",
                 "workload_completed",
                 "served_model_matches_all_requests",
                 "cleanup_success",
@@ -173,7 +176,7 @@ class CommandExecutor(Executor):
             validity.setdefault(
                 "trial_validity_score", float(payload.get("trial_validity_score", 0.0))
             )
-            return TrialResult(
+            result = TrialResult(
                 trial_id=trial_id,
                 candidate=candidate,
                 status=TrialStatus.SUCCEEDED,
@@ -185,6 +188,11 @@ class CommandExecutor(Executor):
                 started_at=started,
                 finished_at=utc_now(),
             )
+            from evotailor.objective import is_valid_trial
+            if not is_valid_trial(result):
+                raise ValueError("FAILED_WORKLOAD: incomplete or inconsistent deployment/task measurements")
+            return result
+
         except subprocess.TimeoutExpired as exc:
             return TrialResult(
                 trial_id=trial_id,

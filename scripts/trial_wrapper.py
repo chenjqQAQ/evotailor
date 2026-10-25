@@ -348,7 +348,8 @@ def main() -> int:
 
     trial_id = str(payload["trial_id"])
     candidate = payload["candidate"]
-    parameters = candidate["parameters"]
+    fixed_parameters = json.loads(os.environ.get("EVOTAILOR_FIXED_PARAMETERS", "{}"))
+    parameters = fixed_parameters | candidate["parameters"]
     started_wall = time.time()
     started_at = datetime.now(UTC).isoformat()
 
@@ -428,7 +429,6 @@ def main() -> int:
     service: subprocess.Popen[str] | None = None
     cleanup_success = True
     main_result: dict[str, Any] | None = None
-    started = time.monotonic()
     working_directory = config.get("working_directory") or config_file.parent
     cleanup_timeout = float(config.get("cleanup_timeout_s") or 120)
     # Reap anything a previous crashed Trial left behind before claiming names.
@@ -436,6 +436,7 @@ def main() -> int:
     try:
         hardware_sampler.start()
         log = (trial_dir / "service.log").open("w")
+        started = time.monotonic()
         service = subprocess.Popen(
             service_command,
             cwd=config.get("working_directory") or config_file.parent,
@@ -450,8 +451,9 @@ def main() -> int:
             float(config.get("startup_timeout_s") or 300),
             service,
         )
-        deployment_time = time.monotonic() - started
-        workload_started = time.monotonic()
+        ready_at = time.monotonic()
+        deployment_time = ready_at - started
+        workload_started = ready_at
         completed = subprocess.run(
             workload_command,
             cwd=config.get("working_directory") or config_file.parent,
@@ -461,13 +463,14 @@ def main() -> int:
             timeout=float(config.get("workload_timeout_s") or 3600),
             check=False,
         )
+        finished_at = time.monotonic()
         (trial_dir / "workload.stdout.log").write_text(completed.stdout)
         (trial_dir / "workload.stderr.log").write_text(completed.stderr)
         if completed.returncode:
             raise RuntimeError(
                 f"workload exited {completed.returncode}: {completed.stderr[-1000:]}"
             )
-        workload_time = time.monotonic() - workload_started
+        workload_time = finished_at - workload_started
         hardware_sampler.stop()
         if result_path.exists():
             workload = json.loads(result_path.read_text())
@@ -483,10 +486,12 @@ def main() -> int:
             for key, value in (workload.get("metrics") or {}).items()
             if isinstance(value, (int, float)) and not isinstance(value, bool)
         }
-        metrics.setdefault("deployment_time_s", deployment_time)
-        metrics.setdefault("task_makespan_s", workload_time)
-        metrics.setdefault("deployment_plus_task_time_s", deployment_time + workload_time)
+        metrics["deployment_time_s"] = deployment_time
+        metrics["task_makespan_s"] = workload_time
+        metrics["deployment_plus_task_time_s"] = finished_at - started
         telemetry = dict(workload.get("telemetry") or {})
+        telemetry["timing_boundaries"] = {"launch_ts": started, "ready_ts": ready_at, "finish_ts": finished_at}
+        telemetry["deployment_parameters"] = parameters
         instrumented_fpm_count = _validate_fpm_file(fpm_path)
         inline_fpms = _flatten_fpm(telemetry.pop("forward_pass_metrics", []))
         if inline_fpms:
@@ -527,12 +532,19 @@ def main() -> int:
         )
         metrics["forward_pass_metrics_count"] = float(fpm_count)
         metrics["hardware_samples_count"] = float(hardware_sampler.samples)
+        if not isinstance(config.get("quality_required"), bool):
+            raise ValueError("Runtime must explicitly declare quality_required as true or false")
+        quality_passed = workload.get("quality_passed") is True if config["quality_required"] else True
         validity = {
+            "deployment_succeeded": service is not None,
+            "quality_passed": quality_passed,
+            "measurement_complete": all(math.isfinite(metrics[key]) and metrics[key] >= 0 for key in
+                ("deployment_time_s", "task_makespan_s", "deployment_plus_task_time_s")),
             "preflight": True,
             "vllm_started": service is not None,
             "vllm_ready": True,
             "workload_completed": True,
-            "task_output_complete": result_path.exists(),
+            "task_output_complete": result_path.exists() or bool(completed.stdout.strip()),
             "request_metrics_complete": bool(
                 metrics.get("request_count", 0) or metrics.get("input_tokens", 0)
             ),
@@ -569,17 +581,12 @@ def main() -> int:
             metrics = main_result["metrics"]
             validity["cleanup_success"] = cleanup_success
             validity["trial_validity_score"] = _validity_score(validity)
-            # Expose the validity gate as a metric so a validation Campaign can
-            # make it the search objective while performance stays auxiliary.
+            # Keep this diagnostic fraction separate from the paper E2E objective.
             metrics["trial_validity_score"] = float(validity["trial_validity_score"])
             objective_metric = str(config.get("objective_metric") or "deployment_plus_task_time_s")
             objective = metrics.get(objective_metric)
-            if "objective" in workload and workload.get("objective_metric") != objective_metric:
-                raise ValueError(
-                    "FAILED_WORKLOAD: workload objective does not name the configured metric"
-                )
-            if "objective" in workload:
-                objective = workload["objective"]
+            if objective_metric != "deployment_plus_task_time_s":
+                raise ValueError("The paper objective must be deployment_plus_task_time_s")
             if not isinstance(objective, (int, float)) or isinstance(objective, bool):
                 print(
                     f"ValueError: workload did not provide numeric objective {objective_metric}",

@@ -4,7 +4,7 @@ The brief is that the agent may change things by itself, so nothing here asks fo
 approval. What replaces approval is mechanism:
 
 * a change to the search space is validated as a search space, and a dimension
-  belonging to the shared base space can be retuned but never deleted;
+  can be added, narrowed, or removed at this stage boundary with evidence;
 * a change to the policy is validated as a policy, with no per-Episode step cap,
   because it applies to a Campaign that has not started;
 * a code proposal is applied to a clean tree and must pass the full test suite,
@@ -24,7 +24,8 @@ from typing import Any
 
 from evotailor.experience.guard import WorkspaceGuard, is_root_trust, patch_paths
 from evotailor.loops.policy import SearchPolicy
-from evotailor.spaces.search_space import Dimension, SearchSpace
+from evotailor.spaces.search_space import SearchSpace
+from evotailor.spaces.builder import adapt_space
 
 
 @dataclass
@@ -105,65 +106,16 @@ class EvolutionApplier:
         available: set[str],
         outcome: EvolutionOutcome,
     ) -> None:
+        if not any(changes.get(key) for key in ("add", "retune", "remove")):
+            return
+        try:
+            next_space = adapt_space(base_space, changes, available_evidence=available)
+        except (TypeError, ValueError, RuntimeError, KeyError) as exc:
+            outcome.rejected.append({"kind": "space_changes", "reason": str(exc)})
+            return
         add = changes.get("add") or {}
         retune = changes.get("retune") or {}
         remove = changes.get("remove") or []
-        evidence = changes.get("evidence") or {}
-        if not (add or retune or remove):
-            return
-        if not isinstance(add, dict) or not isinstance(retune, dict) or not isinstance(remove, list):
-            outcome.rejected.append(
-                {"kind": "space_changes", "reason": "add/retune must be objects and remove a list"}
-            )
-            return
-
-        dimensions = dict(base_space.dimensions)
-        try:
-            for name, spec in {**add, **retune}.items():
-                if name in add and not evidence.get(name):
-                    raise ValueError(f"dimension {name} cites no workload fact")
-                if name in add and evidence.get(name) not in available:
-                    raise ValueError(
-                        f"dimension {name} cites {evidence.get(name)!r}, which is not a "
-                        "workload fact this Campaign observed"
-                    )
-                updated = Dimension.model_validate(spec)
-                if name in base_space.dimensions:
-                    previous = base_space.dimensions[name].values()
-                    updated_values = updated.values()
-                    if any(value not in updated_values for value in previous):
-                        raise ValueError(
-                            f"dimension {name} is already in the search space and "
-                            "its existing values cannot be removed"
-                        )
-                dimensions[name] = updated
-            for name in remove:
-                if name in protected:
-                    raise ValueError(
-                        f"dimension {name} belongs to the shared base search space and "
-                        "cannot be removed"
-                    )
-                if name in dimensions:
-                    raise ValueError(f"existing dimension {name} cannot be removed; space may only expand")
-        except (TypeError, ValueError) as exc:
-            outcome.rejected.append({"kind": "space_changes", "reason": str(exc)})
-            return
-
-        baseline = {name: values[0] for name, values in ((n, d.values()) for n, d in dimensions.items())}
-        for name, value in base_space.safe_baseline.items():
-            if name in dimensions and value in dimensions[name].values():
-                baseline[name] = value
-        try:
-            next_space = SearchSpace(
-                backend=base_space.backend,
-                dimensions=dimensions,
-                global_constraints=list(base_space.global_constraints),
-                safe_baseline=baseline,
-            )
-        except (TypeError, ValueError) as exc:
-            outcome.rejected.append({"kind": "space_changes", "reason": str(exc)})
-            return
-
         path = self.evolution_root / "next_search_space.json"
         path.write_text(next_space.model_dump_json(indent=2) + "\n")
         outcome.next_space_path = str(path)

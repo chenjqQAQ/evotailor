@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import random
 
 from evotailor.spaces.search_space import Dimension, SearchSpace
 
@@ -17,7 +18,6 @@ _KIND_ALIASES = {
     "int": "integer",
     "ints": "integer",
     "integers": "integer",
-    "ints": "integer",
     "float": "float",
     "floats": "float",
     "number": "float",
@@ -91,4 +91,53 @@ def extend_base_space(
         dimensions=dimensions,
         global_constraints=[*base.global_constraints, *(extra_constraints or [])],
         safe_baseline=baseline,
+        fixed_parameters=dict(base.fixed_parameters),
     )
+
+
+def adapt_space(
+    base: SearchSpace,
+    changes: dict[str, Any],
+    *,
+    available_evidence: set[str],
+) -> SearchSpace:
+    """Construct S_(k+1) without mutating S_k (paper Section 4.3).
+
+    Adding, narrowing, and removing searched dimensions all require explicit
+    evidence. Removed dimensions retain their predetermined deployment defaults.
+    Old observations are not rewritten or automatically mapped to this space.
+    """
+    add, retune, remove = (changes.get(key) or default for key, default in
+                           (("add", {}), ("retune", {}), ("remove", [])))
+    citations = changes.get("evidence") or {}
+    if not isinstance(add, dict) or not isinstance(retune, dict) or not isinstance(remove, list):
+        raise ValueError("add and retune must be mappings; remove must be a list")
+    if set(add) & set(base.dimensions):
+        raise ValueError("An added dimension already exists; use retune")
+    if set(retune) - set(base.dimensions) or set(remove) - set(base.dimensions):
+        raise ValueError("Retuned and removed dimensions must exist")
+    if set(remove) & (set(add) | set(retune)):
+        raise ValueError("A dimension cannot be removed and changed together")
+    for name in set(add) | set(retune) | set(remove):
+        if citations.get(name) not in available_evidence:
+            raise ValueError(f"Dimension {name} needs an existing evidence reference")
+    dimensions = dict(base.dimensions)
+    fixed = dict(base.fixed_parameters)
+    baseline = dict(base.safe_baseline)
+    for name in remove:
+        fixed[name] = baseline.pop(name)
+        del dimensions[name]
+    for name, spec in (add | retune).items():
+        dimension = _dimension(spec)
+        dimensions[name] = dimension
+        baseline[name] = baseline.get(name, fixed.get(name))
+        if baseline[name] not in dimension.values():
+            baseline[name] = dimension.values()[0]
+        fixed.pop(name, None)
+    pending = SearchSpace.model_construct(
+        backend=base.backend, dimensions=dimensions, safe_baseline=baseline,
+        fixed_parameters=fixed, global_constraints=list(base.global_constraints),
+    )
+    if pending.validate_candidate(baseline):
+        pending.safe_baseline = pending.sample(random.Random(0))
+    return SearchSpace.model_validate(pending.model_dump())

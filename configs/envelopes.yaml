@@ -6,7 +6,7 @@
 envelopes:
   T1:
     label: none
-    gpu_hog_gib: null        # no per-GPU occupancy imposed
+    gpu_hog_gib: 0           # no per-GPU occupancy imposed
     cpu_cores: null
     ram_gib: null
     io_read_mbps: null

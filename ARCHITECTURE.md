@@ -1,124 +1,31 @@
-# Architecture
+# Paper-to-code map
 
-This document maps the paper mechanisms to the corresponding modules.
+The manuscript is the specification. This map distinguishes executable mechanisms from
+external serving, prediction, optimizer, and benchmark dependencies.
 
-## Campaign execution
-
-1. `discover` records task entrypoints, hardware, installed vLLM version, and supported flags.
-2. `prepare` lets a bounded English-prompt agent add up to two dimensions without redefining the base space.
-3. `CampaignRunner` freezes the final space and derives deterministic per-Trial/per-proposer seeds.
-4. Optuna TPE, SLO-Guard, SCOOT, coverage, and incumbent-neighborhood each emit one complete canonical candidate. One proposer failure does not discard the Trial when other candidates remain.
-5. AIConfigurator predicts every candidate. Simulated runs use a marked deterministic proxy. Real runs require the production bridge and fail closed.
-6. The selector chooses an existing candidate ID. Invalid model output retries in the model client and then uses a deterministic calibrated confidence-bound fallback.
-7. `trial_wrapper.py` executes a host or Docker service/workload contract and returns objective, metrics, and telemetry.
-8. Real observations update task-level residual calibration and are sent to the AIC bridge; FPM telemetry feeds AIConfigurator's native `tune_with_fpms()` path.
-9. The validation phase includes a repeated incumbent candidate. At Episode boundaries the outer agent writes an evidence-linked review and may patch only versioned phase boundaries and uncertainty bonus.
-10. SQLite is the durable fact log. Derived reputation and residual state are rebuilt after restart. A frozen-space hash mismatch stops resume.
-
-The failure-avoidance model, advanced proposer credit assignment, and per-role LLM routing are intentionally deferred. Their interfaces remain separable from the experiment kernel.
-
-
-## 1. Problem formulation (paper §3)
-
-| Concept in the paper | Code |
+| Paper requirement | Implementation |
 | --- | --- |
-| Scenario `z = (w, m, h, f)` — workload, model, hardware, framework | [`src/evotailor/contracts.py`](src/evotailor/contracts.py) `Scenario`, `CampaignConfig` |
-| Complete deployment configuration space `C_z` | [`spaces/search_space.py`](src/evotailor/spaces/search_space.py) |
-| Stage space `S_k ⊆ C_z`, fixed until an outer-loop boundary | [`spaces/base.py`](src/evotailor/spaces/base.py) `SearchSpace`, `Stage` |
-| Trial record `(c_t, r_t, s_t, T_deploy, T_task)` | [`contracts.py`](src/evotailor/contracts.py) `TrialResult` |
-| Validity `s_t ∈ {0,1}` (deploy ok, quality ok, measurements complete) | [`execution/backends.py`](src/evotailor/execution/backends.py) |
-| `T_deploy`, `T_task`, `T_e2e` | [`execution/timing.py`](src/evotailor/execution/timing.py) |
-| Budget `B`: every initiated deployment consumes one unit, rejected candidates consume none | [`loops/runner.py`](src/evotailor/loops/runner.py), [`loops/inner.py`](src/evotailor/loops/inner.py) |
-| Objective `J_n` and valid-evaluation rate `η_n` | [`objective.py`](src/evotailor/objective.py) |
-| History `H_{t-1}` | [`loops/history.py`](src/evotailor/loops/history.py) |
+| Section 3, Eq. 1: deployment, task and end-to-end timing | [execution/timing.py](src/evotailor/execution/timing.py), [trial_wrapper.py](scripts/trial_wrapper.py) use one monotonic launch/ready/finish decomposition. |
+| Section 3: deployment/completion/quality/measurement validity | [objective.py](src/evotailor/objective.py), [execution/backends.py](src/evotailor/execution/backends.py), and the wrapper enforce explicit gates and consistent component measurements. |
+| Eq. 2 and Appendix E: best valid real trial, valid/attempted rate | [objective.py](src/evotailor/objective.py); a configuration-result row is selected by E2E once, with auxiliary metrics from that trial. |
+| Section 4.2: candidate set, selection, one real execution | [loops/runner.py](src/evotailor/loops/runner.py), [loops/proposals.py](src/evotailor/loops/proposals.py), [selection/agent.py](src/evotailor/selection/agent.py). |
+| One total budget across fixed-space stages | [run_evolution_cycles.py](scripts/run_evolution_cycles.py); a campaign is one stage, while an episode is an internal scheduling/review unit. |
+| Section 4.3: add dimensions, narrow ranges or remove dimensions at a boundary | [spaces/builder.py](src/evotailor/spaces/builder.py), [spaces/designer.py](src/evotailor/spaces/designer.py), [experience/code_bank.py](src/evotailor/experience/code_bank.py). Removed dimensions become fixed deployment defaults. |
+| Keep old stage records and parameter meanings intact | [spaces/search_space.py](src/evotailor/spaces/search_space.py), [storage.py](src/evotailor/storage.py), [contracts.py](src/evotailor/contracts.py); each trial records stage, space hash, code version, and resources. |
+| Section 4.4: live resources, explicit infeasibility and free regeneration | [selection/resources.py](src/evotailor/selection/resources.py), [selection/feasibility.py](src/evotailor/selection/feasibility.py), [loops/runner.py](src/evotailor/loops/runner.py). Unknown resources are not guessed. |
+| AIC prediction, task model, uncertainty and two-level feedback | [prediction/aiconfigurator.py](src/evotailor/selection/prediction/aiconfigurator.py), [prediction/configuration.py](src/evotailor/selection/prediction/configuration.py), [aiconfigurator_bridge.py](scripts/aiconfigurator_bridge.py). AIC is external and never serves as a proposer. |
+| Section 4.5: experience retrieval and target verification | [loops/history.py](src/evotailor/loops/history.py), [experience/retrieval.py](src/evotailor/experience/retrieval.py), [experience/bank.py](src/evotailor/experience/bank.py). Source outcomes are conditional evidence, not target measurements. |
+| Versioned search code with isolated validation | [experience/guard.py](src/evotailor/experience/guard.py), [experience/performance.py](src/evotailor/experience/performance.py), and [experience/code_bank.py](src/evotailor/experience/code_bank.py). No configured performance evaluator means no code adoption. |
+| Section 5.1: SCOOT, SLO-Guard, LLM-Tuna | [baselines/registry.py](src/evotailor/baselines/registry.py), [baselines/worker.py](src/evotailor/baselines/worker.py); upstream algorithms execute in an isolated process. No simplified substitute is shipped under a baseline name. |
+| Appendix A: frameworks, models, request counts and envelopes | [scenarios.yaml](configs/scenarios.yaml), [envelopes.yaml](configs/envelopes.yaml), [environment.md](docs/environment.md). Runtime enforcement requires the configured engine/container/resource setup. |
+| Space comparison: Common 12D and Fixed 7D | [common_v2.json](configs/search_spaces/common_v2.json), [fixed_7d.json](configs/search_spaces/fixed_7d.json); adaptive selections are evidence-dependent stage artifacts. |
+| Appendix E: per-request TPOT and serving-window throughput | [metrics/serving.py](src/evotailor/metrics/serving.py); inter-token histogram diagnostics remain separate from mean per-request TPOT. |
+| Figure 3: disjoint task-time partition | [metrics/task.py](src/evotailor/metrics/task.py), [execution/timing.py](src/evotailor/execution/timing.py). |
 
-## 2. Nested loops (paper §4.2)
+Search-space equality is an optional experimental control in `spaces/invariant.py`, not
+a universal restriction: the paper's adaptive variants may differ in dimensions and
+ranges. Every stage independently freezes its actual space.
 
-| Paper | Code |
-| --- | --- |
-| Inner loop: candidate set `Q_t = ⋃_{g∈G_k} g(S_k, H_{t-1})` | [`loops/proposals.py`](src/evotailor/loops/proposals.py), [`loops/proposals_llm.py`](src/evotailor/loops/proposals_llm.py) |
-| Generator set `G_k` | same modules; generators are pluggable and may run concurrently or with different weights |
-| Selection policy `π_k` | [`selection/agent.py`](src/evotailor/selection/agent.py) |
-| Outer loop: reflect and evolve at a stage boundary | [`loops/outer.py`](src/evotailor/loops/outer.py), [`experience/review.py`](src/evotailor/experience/review.py) |
-| Code version `v_k` bound to a stage | [`experience/code_bank.py`](src/evotailor/experience/code_bank.py) |
-| Episode boundaries used to decide when the outer loop fires | [`loops/episode_boundary.py`](src/evotailor/loops/episode_boundary.py), [`loops/episode_planner.py`](src/evotailor/loops/episode_planner.py) |
-| End-to-end driver that runs one campaign | [`loops/runner.py`](src/evotailor/loops/runner.py) |
-
-## 3. Adaptive search spaces (paper §4.3)
-
-| Paper | Code |
-| --- | --- |
-| Dimension set, domain, conditional constraints | [`spaces/base.py`](src/evotailor/spaces/base.py) `Dimension`, `SearchSpace` |
-| Space construction from scenario + reusable experience | [`spaces/builder.py`](src/evotailor/spaces/builder.py), [`spaces/designer.py`](src/evotailor/spaces/designer.py) |
-| Parameter meanings preserved across stages when dimensions are compatible | [`spaces/invariant.py`](src/evotailor/spaces/invariant.py) |
-| Engine-specific flag semantics (vLLM / SGLang / MUSA) | [`spaces/engine_flags.py`](src/evotailor/spaces/engine_flags.py) |
-
-## 4. Resource- and prediction-guided selection (paper §4.4)
-
-| Paper | Code |
-| --- | --- |
-| Explicit infeasibility from resources (memory, devices, incompatible flags) | [`selection/feasibility.py`](src/evotailor/selection/feasibility.py), [`selection/preflight.py`](src/evotailor/selection/preflight.py) |
-| Current resource snapshot | [`selection/resources.py`](src/evotailor/selection/resources.py) |
-| Inference-forward prediction `ŷ_AIC(c)` and calibration | [`selection/prediction/aiconfigurator.py`](src/evotailor/selection/prediction/aiconfigurator.py), [`selection/prediction/calibration.py`](src/evotailor/selection/prediction/calibration.py) |
-| Task-level estimate `T̂_task(c)` with uncertainty | [`selection/prediction/configuration.py`](src/evotailor/selection/prediction/configuration.py) |
-| Balancing exploitation and exploration; rejection reasons logged | [`selection/agent.py`](src/evotailor/selection/agent.py) |
-| Engine capability probing | [`selection/engine_probe.py`](src/evotailor/selection/engine_probe.py) |
-| Priors, reputation, evidence bookkeeping | [`selection/priors.py`](src/evotailor/selection/priors.py), [`selection/reputation.py`](src/evotailor/selection/reputation.py), [`selection/evidence.py`](src/evotailor/selection/evidence.py) |
-
-## 5. Experience and code reuse (paper §4.5)
-
-| Paper | Code |
-| --- | --- |
-| Experience bank: configurations, scenarios, resources, outcomes, prediction errors | [`experience/bank.py`](src/evotailor/experience/bank.py) |
-| Code bank: versioned generators, space design, selection, AIC adaptation | [`experience/code_bank.py`](src/evotailor/experience/code_bank.py) |
-| Retrieval by task/model/hardware/framework/space compatibility | [`experience/retrieval.py`](src/evotailor/experience/retrieval.py) |
-| Guardrails on evolved code before it is admitted | [`experience/guard.py`](src/evotailor/experience/guard.py) |
-| Reflected strategy adjustments stored alongside outcomes | [`experience/review.py`](src/evotailor/experience/review.py), [`experience/performance.py`](src/evotailor/experience/performance.py) |
-| Source-context capture for later diagnosis | [`experience/source_context.py`](src/evotailor/experience/source_context.py) |
-
-## 6. Execution (paper §3, Appendix A)
-
-| Paper | Code |
-| --- | --- |
-| Backend adapters (host / container / simulated) | [`execution/backends.py`](src/evotailor/execution/backends.py) |
-| One deployment + task run, with validity and failure taxonomy | [`execution/backends.py`](src/evotailor/execution/backends.py) |
-| Timing decomposition and overlap accounting | [`execution/timing.py`](src/evotailor/execution/timing.py) |
-
-## 7. Workloads and metrics (paper §5.1, Appendix C, Appendix E)
-
-| Paper | Code |
-| --- | --- |
-| AgentSociety PD / PG / SM request traces | [`workloads/agentsociety.py`](src/evotailor/workloads/agentsociety.py) |
-| ComfyBench `sample4` workflow tasks | [`workloads/comfybench.py`](src/evotailor/workloads/comfybench.py) |
-| Trace discovery and workload inspection | [`workloads/discovery/`](src/evotailor/workloads/discovery) |
-| TTFT, TPOT, throughput from serving histograms | [`metrics/serving.py`](src/evotailor/metrics/serving.py) |
-| Task-time composition: planning / overlap / execution / judging / other | [`metrics/task.py`](src/evotailor/metrics/task.py) |
-
-## 8. Baselines (paper §5.1)
-
-| Paper | Code |
-| --- | --- |
-| SCOOT | [`baselines/scoot.py`](src/evotailor/baselines/scoot.py) |
-| SLO-Guard | [`baselines/slo_guard.py`](src/evotailor/baselines/slo_guard.py) |
-| LLM-Tuna | [`baselines/llm_tuna.py`](src/evotailor/baselines/llm_tuna.py) |
-| Shared baseline interface and registry | [`baselines/registry.py`](src/evotailor/baselines/registry.py) |
-
-## 9. Resource envelopes (paper §5.5, Table A2)
-
-Envelopes `T1`–`T4` are declared in
-[`configs/envelopes.yaml`](configs/envelopes.yaml) and consumed by
-[`selection/resources.py`](src/evotailor/selection/resources.py).
-
-## Dependency direction
-
-```
-contracts ── objective
-    │           │
-    ├── spaces ─┼── loops ── selection ── experience
-    │           │      │          │            │
-    └───────────┴── execution ────┴── workloads ┴── metrics
-                                     baselines
-```
-
-Lower layers never import upper layers: `execution` and `workloads` know nothing about
-search, and `spaces`, `selection`, `experience` never start a process directly.
+Engine execution, task completion, quality grading, and predictor accuracy must be
+verified with the external assets and real environments. Unit and simulated checks do
+not constitute a rerun of the paper's experimental tables.

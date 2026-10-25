@@ -27,6 +27,51 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 
+def capture_resource_snapshot(runtime: dict) -> dict:
+    """Refresh live resources before selection; unavailable values remain explicit.
+
+    Non-NVIDIA runtimes may supply resource_probe_command, which must emit a JSON
+    object with gpu_count, gpu_total_bytes, and gpu_free_bytes (per-device minima).
+    No measured resource state is inferred from a paper's example envelope.
+    """
+    import shutil
+    import subprocess
+
+    snapshot = {"timestamp": time.time(), "available": False,
+                "cpu_count": len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()}
+    try:
+        snapshot["ram_available_bytes"] = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        snapshot["ram_available_bytes"] = None
+    command = runtime.get("resource_probe_command")
+    if command:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=True)
+            measured = json.loads(result.stdout)
+            if not isinstance(measured, dict):
+                raise ValueError("Resource probe must return a JSON object")
+            snapshot.update(measured, available=True, source="configured_probe")
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            snapshot["unavailable_reason"] = str(exc)
+        return snapshot
+    if not shutil.which("nvidia-smi"):
+        snapshot["unavailable_reason"] = "No resource probe configured and nvidia-smi is unavailable"
+        return snapshot
+    command = ["nvidia-smi", "--query-gpu=uuid,memory.total,memory.free", "--format=csv,noheader,nounits"]
+    devices = runtime.get("gpu_uuids") or os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if devices:
+        command.append("--id=" + (",".join(devices) if isinstance(devices, list) else str(devices)))
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=True)
+        rows = [line.split(",") for line in result.stdout.splitlines() if line.strip()]
+        snapshot.update(available=True, source="nvidia-smi", gpu_count=len(rows),
+                        gpu_total_bytes=min(int(float(row[1])) for row in rows) * 1024**2,
+                        gpu_free_bytes=min(int(float(row[2])) for row in rows) * 1024**2)
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError) as exc:
+        snapshot["unavailable_reason"] = str(exc)
+    return snapshot
+
+
 def _lock_path(resource: str) -> Path:
     return Path("/tmp") / (
         "evotailor-resource-" + hashlib.sha256(resource.encode()).hexdigest() + ".lock"

@@ -41,8 +41,8 @@ container/runtime exposes and never assumes a device count.
 | ComfyBench `sample4` tasks | `workloads/comfybench.py` | `EVOTAILOR_DATA_ROOT/tasks/comfybench/sample4.json` |
 | AIConfigurator profile | `selection/prediction/aiconfigurator.py` | `configs/aiconfigurator_profile.example.json` |
 
-Trace sizes assumed by the defaults in `workloads/agentsociety.py`: PD 271, PG 255, SM 263
-operations for the base settings and 1040 / 1016 / 1670 for the larger windows.
+Per-setting request counts are declared in `configs/scenarios.yaml`: NVIDIA/vLLM uses
+PD/PG/SM 271/255/263; MUSA-vLLM uses 1040/255/263; SGLang uses 1040/1016/1670.
 `Workload.assert_size` fails fast on a mismatch, which prevents silently measuring a smaller
 workload.
 
@@ -50,11 +50,22 @@ workload.
 
 The agent that proposes candidates and reflects between stages is an external LLM served over an
 OpenAI-compatible API; it is distinct from the model that serves application requests. Configure it
-with `EVOTAILOR_V2_MODEL`, `EVOTAILOR_V2_BASE_URL` and `EVOTAILOR_V2_API_KEY`.
+with `EVOTAILOR_V2_MODEL`, `EVOTAILOR_V2_BASE_URL` and `EVOTAILOR_PROPOSER_API_KEY`.
 
 ## Resource envelopes
 
-`configs/envelopes.yaml` declares four envelopes. Under an envelope the harness reserves the
-per-GPU occupancy before deployment and applies CPU, RAM and I/O limits to the process tree hosting
-both the engine and the task. A trial that cannot allocate is *invalid*, not merely slow, and still
+`configs/envelopes.yaml` declares four envelopes. For an envelope comparison, configure the runtime to reserve the
+per-GPU occupancy before deployment and apply CPU, RAM and I/O limits to the intended
+process tree hosting the engine and task. The YAML table alone does not enforce limits. A trial that cannot allocate is *invalid*, not merely slow, and still
 consumes budget.
+
+
+## Framework-specific telemetry
+
+The bundled `scripts/vllm_fpm_sitecustomize/sitecustomize.py` instruments the supported
+vLLM scheduler. It is not an SGLang profiler. For a different engine, configure its actual
+service command, parameter mappings, health endpoint and AIC profile. A workload-side
+collector can return compatible `forward_pass_metrics` records; declare
+`telemetry.forward_metrics_from_workload: true` for that route. Missing observations
+must remain unavailable rather than be synthesized. Real cross-framework validation
+requires the corresponding environments and assets.

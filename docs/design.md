@@ -1,98 +1,56 @@
-# Design walkthrough
+# One search, end to end
 
-One search, from a scenario descriptor to the reported number.  Section references are to
-the paper.
+## Scenario and fixed stage
 
-## 0. Inputs
+A scenario fixes the workload protocol, served model, hardware, and inference framework.
+Discovery records evidence, supported engine flags, and task characteristics. The space
+designer constructs a stage space from that evidence and reusable experience. Dimension
+changes require traceable evidence. Unsearched parameters have predetermined defaults.
 
-```
-scenario   z = (workload, model, hardware, framework)      configs/scenarios.yaml
-budget     B real evaluations                              Stage.budget_trials
-envelope   T1..T4 (optional)                               configs/envelopes.yaml
-experience an optional experience/code bank                 experience/
-```
+The implementation calls a fixed-space stage a campaign. `CampaignRunner` freezes its
+space before the first evaluation; its episodes organize internal search phases and
+collect review evidence. Episodes do not authorize changing an active stage's space or
+code. The multi-stage driver is the outer search across campaigns.
 
-## 1. Build the initial space (paper §4.3)
+## Inner loop
 
-[`spaces/builder.py`](../src/evotailor/spaces/builder.py) derives dimensions and ranges from
-the scenario: the observed peak concurrency bounds the batched-token and sequence
-dimensions, the model size bounds the memory-utilization range, and the framework decides
-which flags exist at all ([`spaces/engine_flags.py`](../src/evotailor/spaces/engine_flags.py)).
+1. Configured generators propose candidates from the frozen space and history.
+2. Before execution, capture live resource evidence. Explicit device-count and memory
+   infeasibility can reject a candidate for free. Missing measurements do not imply a
+   failure. If all candidates are rejected, record their reasons and generate another set.
+3. AIC provides inference-forward estimates. The configuration-level model uses valid
+   measurements from a compatible space to estimate task performance and uncertainty.
+   Missing predictions permit exploration; they do not establish infeasibility.
+4. The selector combines resources, history, uncertainty, coverage, and generator evidence.
+   Execute only the chosen candidate. Initiated evaluations consume budget, including
+   deployment failures.
+5. Record the immutable trial, its stage, space hash, code version and resources. Successful
+   task measurements update the task model; inference-forward telemetry updates AIC.
+6. Update the best verified real result. Its deployment/task components and auxiliary
+   metrics belong to that same trial, rather than independently selected metric minima.
 
-The result is a [`SearchSpace`](../src/evotailor/spaces/base.py) — dimensions, domains and
-conditional constraints.  Two invariants are checked before the stage starts
-([`spaces/invariant.py`](../src/evotailor/spaces/invariant.py)):
+## Timing and validity
 
-* every dimension reaches the engine flag it claims to control;
-* when the space is rebuilt, dimensions that keep their name keep their meaning, so old
-  samples stay comparable.
+The wrapper records launch, readiness, and finish on one monotonic clock. Deployment and
+task intervals exactly partition E2E. Cleanup and optimizer computation do not silently
+change these boundaries. Completion and protocol quality are checked separately from
+latency. A failed quality criterion or missing measurements cannot produce a valid winner.
+AIC calibration acceptance is an annotation, not a reason to rewrite a completed trial's
+quality or measured validity.
 
-## 2. Inner loop (paper §4.2)
+## Outer boundary
 
-```
-repeat until budget exhausted:
-    Q_t  = union over generators of g(S_k, H_{t-1})        loops/proposals.py
-    keep = {c in Q_t : feasible(c)}                        selection/feasibility.py
-    c_t  = selector(keep, resources, predictions, H)       selection/agent.py
-    run  = deploy(c_t) + task(c_t)                         execution/trial.py
-    H    = H + (c_t, run)                                  loops/history.py
-```
+After a stage ends, reflection reads histories, prediction errors, resource rejections,
+generator outcomes, and source context. The next stage may add, narrow, or remove searched
+dimensions. Removed dimensions retain fixed deployment defaults. Completed records keep
+their original space and are never silently relabelled as equivalent observations for a
+changed schema. Compatible evidence may be reused; other records remain conditional
+experience or explicitly mapped data.
 
-Budget accounting: every *deployment* consumes one unit, including failures; a candidate
-rejected by the feasibility gate consumes none.  This is why a method that screens well can
-evaluate more distinct configurations within the same budget.
+Policies and code for the next stage are versioned. Code proposals run in isolation and
+must pass functional checks plus the configured performance evaluation before adoption.
+The objective and measurement/validity kernel are protected from self-modification.
 
-## 3. Selection (paper §4.4)
-
-The selector sees three kinds of evidence:
-
-1. **Resources** — current GPU memory headroom, device count, host memory; used to reject
-   candidates that cannot be served now, not just nominally.
-2. **Inference-forward prediction** `ŷ_AIC(c)` and its calibration state
-   ([`selection/prediction/`](../src/evotailor/selection/prediction)).
-3. **Task-level estimate** `T̂_task(c)` with an uncertainty band, fitted from the valid
-   trials of the current stage.
-
-It ranks survivors by expected end-to-end time *discounted by uncertainty*, so an
-unexplored region can still win when the incumbent's prediction is confident and slow.
-
-## 4. Timing (paper §3)
-
-[`execution/timing.py`](../src/evotailor/execution/timing.py) stamps three instants —
-launch, ready, finish — and derives `T_deploy`, `T_task`, `T_e2e`.  Optional intermediate
-marks (`import`, `engine_init`, `weights`, `warmup`, `serve`) allow the deployment interval
-to be attributed afterwards without changing the definition of the objective.
-
-## 5. Metrics (paper §5.1, Appendix E)
-
-Serving metrics are scraped from the engine and parsed as cumulative histograms
-([`metrics/serving.py`](../src/evotailor/metrics/serving.py)).  The parse yields the mean
-(the sum/count ratio) and interpolated quantiles.  Prefix-cache counters are recorded with
-every trial: a configuration that enables prefix caching and one that does not are not
-comparable, so the setting is part of the record.
-
-Task time is partitioned into planning-only, planning/execution overlap, execution-only,
-judging and other ([`metrics/task.py`](../src/evotailor/metrics/task.py)).  The partition is
-computed over interval endpoints, so overlapping spans are never counted twice and the
-shares always sum to the task duration.
-
-## 6. Outer loop (paper §4.2, §4.5)
-
-When the stage budget is spent — or the stage has stopped improving
-(`loops/inner.py::should_evolve`) — the outer loop runs:
-
-* **reflect**: rank dimensions by how much they explained the observed spread
-  ([`experience/review.py`](../src/evotailor/experience/review.py));
-* **evolve the space**: add a dimension, drop a dead one, or narrow a range
-  (`SearchSpace.evolve`);
-* **evolve the code**: the code bank holds versioned generators and selection policy
-  fragments; a proposed change is admitted only after the guard accepts it
-  ([`experience/guard.py`](../src/evotailor/experience/guard.py));
-* **write back**: outcomes, prediction errors and reflected adjustments are appended to the
-  experience bank, tagged with the stage and code version that produced them.
-
-## 7. Reporting
-
-`J_n` (best verified end-to-end time) and `η_n` (valid-evaluation rate) are computed from
-the trial list, not from a running minimum, so a crash cannot inflate either
-([`objective.py`](../src/evotailor/objective.py)).
+The stage driver divides one total budget between stages and aggregates only target real
+trials when selecting a winner. Source-scenario best configurations require new target
+evaluations. Fixed-configuration retests are separate from search-budget accounting.

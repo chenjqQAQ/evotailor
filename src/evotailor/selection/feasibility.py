@@ -58,35 +58,21 @@ def weight_memory_verdict(
     weights_bytes: int | None,
     gpu_memory_bytes: int | None,
     gpu_count: int | None,
+    available_memory_bytes: int | None = None,
 ) -> Infeasible | None:
     """Return the reason a configuration cannot start, or ``None`` when it may.
 
     Silence is the default: if a number is missing, the candidate is allowed through
     rather than refused on a guess.
     """
-    tp = _as_int(parameters.get(TP))
-    pp = _as_int(parameters.get(PP))
-    dp = _as_int(parameters.get(DP))
+    tp = _as_int(parameters.get(TP, 1))
+    pp = _as_int(parameters.get(PP, 1))
+    dp = _as_int(parameters.get(DP, 1))
     if tp is None or pp is None or dp is None:
         return None
 
-    if dp > 1:
-        # Measured 2026-10-09 on both A100s: `vllm serve --data-parallel-size 2` never
-        # reaches the port. The DP coordinator spawns its engine cores and then dies
-        # waiting for their ZMQ addresses over a pipe:
-        #   RuntimeError: DP Coordinator process failed to report ZMQ addresses during startup.
-        # Three independent attempts reproduced it, one of them with no resource limits
-        # at all, so this is a property of the build rather than of the frozen budget.
-        return Infeasible(
-            code="DATA_PARALLEL_UNSUPPORTED",
-            detail=(
-                f"data_parallel_size={dp} cannot launch with this vLLM 0.19.1 build: "
-                "the DP coordinator exits without the engine ZMQ address ("
-                "DP Coordinator process failed to report ZMQ addresses during startup), "
-                "The same error persists without resource limits."
-            ),
-            parameters=dict(parameters),
-        )
+    if available_memory_bytes is not None and weights_bytes is not None and weights_bytes / (tp * pp) > available_memory_bytes:
+        return Infeasible("INSUFFICIENT_LIVE_MEMORY", "Model weights exceed currently free memory per device", dict(parameters))
 
     if gpu_count is not None and tp * pp * dp > gpu_count:
         return Infeasible(
